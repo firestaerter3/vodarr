@@ -3,6 +3,7 @@ package tmdb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -11,11 +12,17 @@ import (
 	"time"
 )
 
-const baseURL = "https://api.themoviedb.org/3"
+const defaultBaseURL = "https://api.themoviedb.org/3"
+
+// errNotFound is returned by get() when the TMDB API responds with 404.
+// Callers use this to avoid caching not-found responses (a 404 may be
+// transient, so caching it for 24 h would hide valid data for a full day).
+var errNotFound = errors.New("not found")
 
 // Client is a TMDB API v3 client with rate limiting and caching.
 type Client struct {
 	apiKey  string
+	baseURL string
 	http    *http.Client
 	limiter *time.Ticker
 
@@ -35,12 +42,36 @@ const (
 
 func NewClient(apiKey string) *Client {
 	return &Client{
-		apiKey: apiKey,
-		http:   &http.Client{Timeout: 10 * time.Second},
+		apiKey:  apiKey,
+		baseURL: defaultBaseURL,
+		http:    &http.Client{Timeout: 10 * time.Second},
 		// 40 req/s max — use 30 to be safe
 		limiter: time.NewTicker(time.Second / 30),
 		cache:   make(map[string]cacheEntry),
 	}
+}
+
+// Validate checks that the API key is accepted by TMDB.
+// It bypasses the rate limiter and cache, making a direct HTTP request.
+func (c *Client) Validate(ctx context.Context) error {
+	u := c.baseURL + "/authentication"
+	q := url.Values{"api_key": {c.apiKey}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u+"?"+q.Encode(), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("http get /authentication: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("invalid TMDB API key")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d from TMDB", resp.StatusCode)
+	}
+	return nil
 }
 
 // MovieSearchResult is a single result from movie search.
@@ -160,6 +191,9 @@ func (c *Client) GetMovieExternalIDs(ctx context.Context, tmdbID int) (*External
 
 	var ids ExternalIDs
 	if err := c.get(ctx, fmt.Sprintf("/movie/%d/external_ids", tmdbID), nil, &ids); err != nil {
+		if errors.Is(err, errNotFound) {
+			return nil, nil // 404 is not cached — may be transient
+		}
 		return nil, fmt.Errorf("movie external ids %d: %w", tmdbID, err)
 	}
 	ids.TMDBId = tmdbID
@@ -179,6 +213,9 @@ func (c *Client) GetTVExternalIDs(ctx context.Context, tmdbID int) (*ExternalIDs
 
 	var ids ExternalIDs
 	if err := c.get(ctx, fmt.Sprintf("/tv/%d/external_ids", tmdbID), nil, &ids); err != nil {
+		if errors.Is(err, errNotFound) {
+			return nil, nil // 404 is not cached — may be transient
+		}
 		return nil, fmt.Errorf("tv external ids %d: %w", tmdbID, err)
 	}
 	ids.TMDBId = tmdbID
@@ -194,7 +231,7 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out in
 		return ctx.Err()
 	}
 
-	u := baseURL + path
+	u := c.baseURL + path
 	q := url.Values{"api_key": {c.apiKey}}
 	for k, vs := range params {
 		for _, v := range vs {
@@ -213,7 +250,7 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out in
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil
+		return errNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status %d for %s", resp.StatusCode, path)

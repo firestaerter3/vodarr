@@ -70,7 +70,7 @@ func main() {
 	// 2D: Pass qBit credentials from config
 	qbitHandler := qbit.NewHandler(qbitStore, strmWriter, xc, cfg.Output.Path, cfg.Server.QbitUsername, cfg.Server.QbitPassword)
 	// 2E: Pass web credentials from config
-	webHandler := web.NewHandler(idx, scheduler, web.StaticFS(), cfg.Server.WebUsername, cfg.Server.WebPassword)
+	webHandler := web.NewHandler(idx, scheduler, web.StaticFS(), cfg, *configPath, cfg.Server.WebUsername, cfg.Server.WebPassword)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

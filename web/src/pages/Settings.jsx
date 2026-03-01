@@ -71,11 +71,37 @@ function Section({ title, children }) {
   )
 }
 
+function TestButton({ onClick, loading, success, error }) {
+  return (
+    <div className="flex items-center gap-3 pt-1">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={loading}
+        className="px-4 py-1.5 bg-void-600 border border-void-500 text-steel-400 rounded font-mono text-[12px] hover:bg-void-500 hover:text-steel-300 transition-all disabled:opacity-40"
+      >
+        {loading ? 'Testing…' : 'Test Connection'}
+      </button>
+      {success && (
+        <span className="font-mono text-[12px] text-lime-400 animate-fade-up">✓ Connected</span>
+      )}
+      {error && (
+        <span className="font-mono text-[12px] text-red-400 animate-fade-up">{error}</span>
+      )}
+    </div>
+  )
+}
+
 export default function Settings() {
   const [cfg, setCfg] = useState(DEFAULT)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState(null)
   const [loadError, setLoadError] = useState(null)
+  const [restartRequired, setRestartRequired] = useState(false)
+
+  const [xtreamTest, setXtreamTest] = useState({ loading: false, success: false, error: null })
+  const [tmdbTest, setTmdbTest] = useState({ loading: false, success: false, error: null })
 
   useEffect(() => {
     fetch('/api/config')
@@ -98,16 +124,71 @@ export default function Settings() {
   const handleSave = async e => {
     e.preventDefault()
     setSaving(true)
+    setSaveError(null)
     try {
-      await fetch('/api/config', {
+      const res = await fetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cfg),
       })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 3000)
-    } catch { /* ignore */ }
+      const data = await res.json()
+      if (data.error) {
+        setSaveError(data.error)
+      } else {
+        setSaved(true)
+        setTimeout(() => setSaved(false), 3000)
+        if (data.restart_required) {
+          setRestartRequired(true)
+        }
+      }
+    } catch (e) {
+      setSaveError(e.message)
+    }
     setSaving(false)
+  }
+
+  const testXtream = async () => {
+    setXtreamTest({ loading: true, success: false, error: null })
+    try {
+      const res = await fetch('/api/test-xtream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg.xtream),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setXtreamTest({ loading: false, success: true, error: null })
+        setTimeout(() => setXtreamTest(s => ({ ...s, success: false })), 5000)
+      } else {
+        setXtreamTest({ loading: false, success: false, error: data.error || 'Connection failed' })
+        setTimeout(() => setXtreamTest(s => ({ ...s, error: null })), 5000)
+      }
+    } catch (e) {
+      setXtreamTest({ loading: false, success: false, error: e.message })
+      setTimeout(() => setXtreamTest(s => ({ ...s, error: null })), 5000)
+    }
+  }
+
+  const testTMDB = async () => {
+    setTmdbTest({ loading: true, success: false, error: null })
+    try {
+      const res = await fetch('/api/test-tmdb', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg.tmdb),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setTmdbTest({ loading: false, success: true, error: null })
+        setTimeout(() => setTmdbTest(s => ({ ...s, success: false })), 5000)
+      } else {
+        setTmdbTest({ loading: false, success: false, error: data.error || 'Connection failed' })
+        setTimeout(() => setTmdbTest(s => ({ ...s, error: null })), 5000)
+      }
+    } catch (e) {
+      setTmdbTest({ loading: false, success: false, error: e.message })
+      setTimeout(() => setTmdbTest(s => ({ ...s, error: null })), 5000)
+    }
   }
 
   return (
@@ -121,6 +202,11 @@ export default function Settings() {
           <p className="mt-2 font-mono text-[11px] text-yellow-400/80">
             Note: Could not load current config ({loadError}). Showing defaults.
           </p>
+        )}
+        {restartRequired && (
+          <div className="mt-3 px-4 py-2.5 bg-yellow-400/10 border border-yellow-400/30 rounded font-mono text-[12px] text-yellow-400">
+            Restart required — changes take effect after restarting VODarr.
+          </div>
         )}
       </div>
 
@@ -145,6 +231,12 @@ export default function Settings() {
                 <TextInput value={cfg.xtream.password} onChange={v => set('xtream.password', v)} type="password" monospace />
               </Field>
             </div>
+            <TestButton
+              onClick={testXtream}
+              loading={xtreamTest.loading}
+              success={xtreamTest.success}
+              error={xtreamTest.error}
+            />
           </Section>
         </div>
 
@@ -160,6 +252,12 @@ export default function Settings() {
                 monospace
               />
             </Field>
+            <TestButton
+              onClick={testTMDB}
+              loading={tmdbTest.loading}
+              success={tmdbTest.success}
+              error={tmdbTest.error}
+            />
           </Section>
         </div>
 
@@ -256,6 +354,11 @@ export default function Settings() {
           {saved && (
             <span className="font-mono text-[12px] text-lime-400 animate-fade-up">
               ✓ Saved
+            </span>
+          )}
+          {saveError && (
+            <span className="font-mono text-[12px] text-red-400 animate-fade-up">
+              {saveError}
             </span>
           )}
         </div>
