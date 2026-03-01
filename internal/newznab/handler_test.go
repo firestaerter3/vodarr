@@ -43,7 +43,7 @@ func TestHandleCaps(t *testing.T) {
 		t.Errorf("status = %d, want 200", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "Vodarr") {
+	if !strings.Contains(body, "VODarr") {
 		t.Error("caps response missing server title")
 	}
 	if !strings.Contains(body, "movie-search") {

@@ -189,7 +189,7 @@ export default function Settings() {
             <div className="flex items-center justify-between">
               <Field label="Sync on Startup">
                 <span className="font-mono text-[11px] text-steel-500">
-                  Run a full sync when Vodarr starts
+                  Run a full sync when VODarr starts
                 </span>
               </Field>
               <Toggle value={cfg.sync.on_startup} onChange={v => set('sync.on_startup', v)} />

@@ -4,10 +4,11 @@
 
 # Config with credentials (never commit)
 config.yml
-config/
+/config/
 
 # Frontend build output (goes to internal/web/dist/ at build time)
 web/node_modules/
+web/dist/
 internal/web/dist/
 
 # OS

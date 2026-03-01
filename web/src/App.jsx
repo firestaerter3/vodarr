@@ -54,7 +54,7 @@ export default function App() {
               </svg>
             </div>
             <span className="font-display font-800 text-xl tracking-tight text-steel-300">
-              VOD<span className="text-lime-400">ARR</span>
+              VOD<span className="text-lime-400">arr</span>
             </span>
           </div>
           <p className="mt-1.5 font-mono text-[10px] text-steel-500 tracking-widest uppercase">

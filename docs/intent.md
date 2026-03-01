@@ -1,4 +1,4 @@
-# Vodarr — Intent & Requirements
+# VODarr — Intent & Requirements
 
 ## Problem
 
@@ -11,11 +11,11 @@ proper metadata.
 The Jellyfin Xtream plugin exists but loads the entire catalog on
 startup, causing unbearable load times and providing no filtering.
 
-**Vodarr solves this by acting as a native *arr integration:**
-- Sonarr/Radarr search Vodarr as they would any Newznab indexer
-- Vodarr looks up the content in the Xtream catalog
+**VODarr solves this by acting as a native *arr integration:**
+- Sonarr/Radarr search VODarr as they would any Newznab indexer
+- VODarr looks up the content in the Xtream catalog
 - Sonarr/Radarr "download" via a fake qBittorrent client
-- Vodarr writes a `.strm` file pointing to the Xtream stream URL
+- VODarr writes a `.strm` file pointing to the Xtream stream URL
 - Sonarr/Radarr import the `.strm` into the media library
 - Jellyfin plays the `.strm`, streaming directly from the provider
 
@@ -36,7 +36,7 @@ tiny `.strm` text files.
 3. **Low friction setup** — single Docker container, one config file,
    no external database required.
 
-4. **Non-destructive** — Vodarr only writes `.strm` files. It does not
+4. **Non-destructive** — VODarr only writes `.strm` files. It does not
    modify the Xtream provider or the *arr libraries in any destructive
    way.
 
@@ -45,7 +45,7 @@ tiny `.strm` text files.
 ## Non-Goals
 
 - **Transcoding or re-encoding** — streams are passed through as-is.
-- **DRM bypass** — Vodarr only works with providers that serve plain
+- **DRM bypass** — VODarr only works with providers that serve plain
   HTTP streams.
 - **Download scheduling / queuing** — that is Sonarr/Radarr's job.
 - **Subtitle or metadata scraping** — Jellyfin handles this via its
@@ -95,7 +95,7 @@ custom download client protocol, which would require a plugin in each
 *arr application.
 
 **Newznab `t=get` returns JSON, not NZB**
-The standard `t=get` response is an NZB file. Vodarr instead returns a
+The standard `t=get` response is an NZB file. VODarr instead returns a
 small JSON descriptor containing the Xtream stream ID and metadata.
 The fake qBit handler fetches this descriptor when processing a
 `torrents/add` request. This avoids implementing a full NZB parser and
@@ -104,7 +104,7 @@ keeps the grab→strm path simple.
 **STRM file naming follows *arr conventions**
 Radarr expects: `movies/{Movie Name (Year)}/{Movie.Name.Year.mkv}`
 Sonarr expects: `tv/{Series Name}/Season NN/{Series.Name.SXXEYY.mkv}`
-Vodarr writes `.strm` files in exactly these layouts so that *arr's
+VODarr writes `.strm` files in exactly these layouts so that *arr's
 import logic works without custom configuration.
 
 ---
@@ -128,7 +128,7 @@ Xtream GetSeries()                                               │
                                                     index.Replace(enrichedItems)
 ```
 
-### Search (Sonarr/Radarr → Vodarr Newznab)
+### Search (Sonarr/Radarr → VODarr Newznab)
 
 ```
 GET /api?t=movie&imdbid=tt0133093
@@ -142,7 +142,7 @@ GET /api?t=tvsearch&tvdbid=81189
   → return to Sonarr/Radarr
 ```
 
-### Grab (Sonarr/Radarr → Vodarr qBit)
+### Grab (Sonarr/Radarr → VODarr qBit)
 
 ```
 POST /api/v2/torrents/add  (urls=http://vodarr:7878/api?t=get&id=42&type=movie)
@@ -189,15 +189,15 @@ Supported search parameters:
 | Port | `8080` |
 | Username | (leave blank) |
 | Password | (leave blank) |
-| Category | (optional, ignored by Vodarr) |
+| Category | (optional, ignored by VODarr) |
 
-Vodarr reports every torrent as immediately complete
+VODarr reports every torrent as immediately complete
 (`state: "pausedUP"`, `progress: 1.0`). *arr applications will
 trigger an import check within their normal polling cycle.
 
 ### Jellyfin
 
-No Vodarr-specific configuration needed. Jellyfin plays `.strm`
+No VODarr-specific configuration needed. Jellyfin plays `.strm`
 files natively — point a library at the same path that Sonarr/Radarr
 import to, and Jellyfin will pick up the files automatically.
 

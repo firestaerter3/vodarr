@@ -360,7 +360,7 @@ func (h *Handler) handleTorrentsProperties(w http.ResponseWriter, r *http.Reques
 		"share_ratio":       1.0,
 		"addition_date":     t.AddedOn,
 		"completion_date":   t.CompletionOn,
-		"created_by":        "Vodarr",
+		"created_by":        "VODarr",
 		"dl_speed_avg":      0,
 		"dl_speed":          0,
 		"eta":               0,

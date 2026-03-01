@@ -24,7 +24,7 @@ type Torrent struct {
 	AddedOn      int64
 	CompletionOn int64
 
-	// Vodarr-specific: path to the created .strm file(s)
+	// VODarr-specific: path to the created .strm file(s)
 	StrmPaths []string
 
 	// Descriptor from the Newznab /api?t=get response

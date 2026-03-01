@@ -105,7 +105,7 @@ func buildCaps(serverURL string) *CapsResponse {
 	return &CapsResponse{
 		Server: CapsServer{
 			Version: "1.0",
-			Title:   "Vodarr",
+			Title:   "VODarr",
 			Email:   "vodarr@localhost",
 		},
 		Limits: CapsLimits{Max: 100, Default: 50},
@@ -141,8 +141,8 @@ func buildRSS(serverURL string, items []*index.Item, offset, total int) *RSS {
 		NZB:     "http://www.newzbin.com/DTD/2007/feeds/NZB/",
 		Newznab: "http://www.newznab.com/DTD/2010/feeds/attributes/",
 		Channel: Channel{
-			Title:       "Vodarr",
-			Description: "Xtream Codes IPTV via Vodarr",
+			Title:       "VODarr",
+			Description: "Xtream Codes IPTV via VODarr",
 			Link:        serverURL,
 			Language:    "en-gb",
 			NewznabResp: Response{Offset: offset, Total: total},
