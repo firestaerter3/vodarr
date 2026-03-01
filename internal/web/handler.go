@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -177,8 +178,10 @@ type outputConfigResp struct {
 }
 
 type syncConfigResp struct {
-	Interval  string `json:"interval"`
-	OnStartup bool   `json:"on_startup"`
+	Interval             string   `json:"interval"`
+	OnStartup            bool     `json:"on_startup"`
+	Parallelism          int      `json:"parallelism"`
+	TitleCleanupPatterns []string `json:"title_cleanup_patterns"`
 }
 
 type serverConfigResp struct {
@@ -211,8 +214,10 @@ func (h *Handler) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			SeriesDir: cfg.Output.SeriesDir,
 		},
 		Sync: syncConfigResp{
-			Interval:  cfg.Sync.Interval,
-			OnStartup: cfg.Sync.OnStartup,
+			Interval:             cfg.Sync.Interval,
+			OnStartup:            cfg.Sync.OnStartup,
+			Parallelism:          cfg.Sync.Parallelism,
+			TitleCleanupPatterns: cfg.Sync.TitleCleanupPatterns,
 		},
 		Server: serverConfigResp{
 			NewznabPort: cfg.Server.NewznabPort,
@@ -242,8 +247,10 @@ type putConfigRequest struct {
 		SeriesDir string `json:"series_dir"`
 	} `json:"output"`
 	Sync struct {
-		Interval  string `json:"interval"`
-		OnStartup bool   `json:"on_startup"`
+		Interval             string   `json:"interval"`
+		OnStartup            bool     `json:"on_startup"`
+		Parallelism          int      `json:"parallelism"`
+		TitleCleanupPatterns []string `json:"title_cleanup_patterns"`
 	} `json:"sync"`
 	Server struct {
 		NewznabPort int `json:"newznab_port"`
@@ -277,6 +284,17 @@ func (h *Handler) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	newCfg.Output.SeriesDir = req.Output.SeriesDir
 	newCfg.Sync.Interval = req.Sync.Interval
 	newCfg.Sync.OnStartup = req.Sync.OnStartup
+	if req.Sync.Parallelism != 0 {
+		newCfg.Sync.Parallelism = req.Sync.Parallelism
+	}
+	// Filter empty patterns before saving
+	var cleanPatterns []string
+	for _, p := range req.Sync.TitleCleanupPatterns {
+		if p = strings.TrimSpace(p); p != "" {
+			cleanPatterns = append(cleanPatterns, p)
+		}
+	}
+	newCfg.Sync.TitleCleanupPatterns = cleanPatterns
 	newCfg.Logging.Level = req.Logging.Level
 
 	// Only override the three public port fields; preserve all other ServerConfig fields

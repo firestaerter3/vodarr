@@ -4,7 +4,7 @@ const DEFAULT = {
   xtream: { url: '', username: '', password: '' },
   tmdb: { api_key: '' },
   output: { path: '/data/strm', movies_dir: 'movies', series_dir: 'tv' },
-  sync: { interval: '6h', on_startup: true, parallelism: 10 },
+  sync: { interval: '6h', on_startup: true, parallelism: 10, title_cleanup_patterns: [] },
   server: { newznab_port: 7878, qbit_port: 8080, web_port: 3000 },
   logging: { level: 'info' },
 }
@@ -94,6 +94,7 @@ function TestButton({ onClick, loading, success, error }) {
 
 export default function Settings() {
   const [cfg, setCfg] = useState(DEFAULT)
+  const [patternsText, setPatternsText] = useState('')
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
@@ -106,9 +107,21 @@ export default function Settings() {
   useEffect(() => {
     fetch('/api/config')
       .then(r => r.json())
-      .then(data => setCfg(prev => deepMerge(prev, data)))
+      .then(data => {
+        setCfg(prev => deepMerge(prev, data))
+        setPatternsText((data.sync?.title_cleanup_patterns || []).join('\n'))
+      })
       .catch(e => setLoadError(e.message))
   }, [])
+
+  // Build the full config payload, parsing patternsText into an array.
+  const buildPayload = () => ({
+    ...cfg,
+    sync: {
+      ...cfg.sync,
+      title_cleanup_patterns: patternsText.split('\n').filter(l => l.trim()),
+    },
+  })
 
   const set = (path, value) => {
     setCfg(prev => {
@@ -148,7 +161,7 @@ export default function Settings() {
 
   const handleSave = async e => {
     e.preventDefault()
-    await saveConfig(cfg)
+    await saveConfig(buildPayload())
   }
 
   const testXtream = async () => {
@@ -163,7 +176,7 @@ export default function Settings() {
       if (data.success) {
         setXtreamTest({ loading: false, success: true, error: null })
         setTimeout(() => setXtreamTest(s => ({ ...s, success: false })), 5000)
-        await saveConfig(cfg)
+        await saveConfig(buildPayload())
       } else {
         setXtreamTest({ loading: false, success: false, error: data.error || 'Connection failed' })
         setTimeout(() => setXtreamTest(s => ({ ...s, error: null })), 5000)
@@ -186,7 +199,7 @@ export default function Settings() {
       if (data.success) {
         setTmdbTest({ loading: false, success: true, error: null })
         setTimeout(() => setTmdbTest(s => ({ ...s, success: false })), 5000)
-        await saveConfig(cfg)
+        await saveConfig(buildPayload())
       } else {
         setTmdbTest({ loading: false, success: false, error: data.error || 'Connection failed' })
         setTimeout(() => setTmdbTest(s => ({ ...s, error: null })), 5000)
@@ -307,6 +320,18 @@ export default function Settings() {
               </Field>
               <Toggle value={cfg.sync.on_startup} onChange={v => set('sync.on_startup', v)} />
             </div>
+            <Field
+              label="Title Cleanup Patterns"
+              hint="One regex per line. Matched text is removed from stream names before TMDB search."
+            >
+              <textarea
+                value={patternsText}
+                onChange={e => setPatternsText(e.target.value)}
+                placeholder={'\\s*\\(NL GESPROKEN\\)\n\\s*\\[DUBBED\\]'}
+                rows={4}
+                className="w-full px-3 py-2 bg-void-800 border border-void-600 rounded text-steel-300 text-[13px] font-mono resize-y"
+              />
+            </Field>
           </Section>
         </div>
 

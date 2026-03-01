@@ -1,15 +1,17 @@
 services:
   vodarr:
-    build: .
+    image: ghcr.io/rolandb5/vodarr:latest
+    # To build locally instead: comment out `image:` above and uncomment below
+    # build: .
     container_name: vodarr
     restart: unless-stopped
     ports:
-      - "7878:7878"   # Newznab indexer API (add to Sonarr/Radarr as indexer)
+      - "7878:7878"   # Newznab indexer API (add to Sonarr/Radarr/Prowlarr as indexer)
       - "8080:8080"   # Fake qBittorrent API (add to Sonarr/Radarr as download client)
       - "3000:3000"   # Web UI
     volumes:
-      - ./config:/config          # Mount your config.yml here
-      - /path/to/strm:/data/strm  # Where .strm files will be written
+      - ./config:/config                     # Mount your config.yml here
+      - /mnt/debrid/vodarr-strm:/data/strm  # Where .strm files will be written
     environment:
       - TZ=UTC
     healthcheck:

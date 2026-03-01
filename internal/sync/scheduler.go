@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	gosync "sync"
 	"sync/atomic"
 	"time"
@@ -15,6 +17,20 @@ import (
 	"github.com/vodarr/vodarr/internal/tmdb"
 	"github.com/vodarr/vodarr/internal/xtream"
 )
+
+// iptvPrefixRe matches one or more stacked leading IPTV category prefixes such as
+// "| NL |", "| NL | HD |", "| NL | HD | 4K |", etc. in a single pass.
+var iptvPrefixRe = regexp.MustCompile(`^\|\s*(?:[^|]+\|\s*)+`)
+
+// cleanTitleForSearch strips IPTV prefixes and user-defined patterns from a stream
+// name before passing it to TMDB search.
+func cleanTitleForSearch(name string, patterns []*regexp.Regexp) string {
+	title := iptvPrefixRe.ReplaceAllString(name, "")
+	for _, re := range patterns {
+		title = re.ReplaceAllString(title, "")
+	}
+	return strings.TrimSpace(title)
+}
 
 // Status describes the current sync state.
 type Status struct {
@@ -36,10 +52,11 @@ type Progress struct {
 
 // Scheduler manages periodic syncing of the Xtream catalog into the index.
 type Scheduler struct {
-	cfg    *config.Config
-	xtream *xtream.Client
-	tmdb   *tmdb.Client
-	idx    *index.Index
+	cfg          *config.Config
+	xtream       *xtream.Client
+	tmdb         *tmdb.Client
+	idx          *index.Index
+	userPatterns []*regexp.Regexp
 
 	mu      gosync.RWMutex // 3A: protects status field
 	syncMu  gosync.Mutex   // 3B: serialises concurrent Sync calls
@@ -48,11 +65,24 @@ type Scheduler struct {
 }
 
 func NewScheduler(cfg *config.Config, xc *xtream.Client, tc *tmdb.Client, idx *index.Index) *Scheduler {
+	var patterns []*regexp.Regexp
+	for _, p := range cfg.Sync.TitleCleanupPatterns {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		re, err := regexp.Compile(p)
+		if err != nil {
+			slog.Warn("invalid title_cleanup_pattern, skipping", "pattern", p, "error", err)
+			continue
+		}
+		patterns = append(patterns, re)
+	}
 	return &Scheduler{
-		cfg:    cfg,
-		xtream: xc,
-		tmdb:   tc,
-		idx:    idx,
+		cfg:          cfg,
+		xtream:       xc,
+		tmdb:         tc,
+		idx:          idx,
+		userPatterns: patterns,
 	}
 }
 
@@ -383,6 +413,11 @@ func buildSeriesItem(sr xtream.Series) *index.Item {
 // It uses a worker pool to overlap HTTP latency while the TMDB client's
 // internal ticker naturally enforces the 30 req/s rate limit.
 func (s *Scheduler) enrich(ctx context.Context, items []*index.Item) ([]*index.Item, error) {
+	if s.cfg.TMDB.APIKey == "" {
+		slog.Warn("TMDB API key not set; skipping enrichment")
+		return items, nil
+	}
+
 	total := len(items)
 
 	parallelism := s.cfg.Sync.Parallelism
@@ -476,9 +511,11 @@ func (s *Scheduler) resolveByTitle(ctx context.Context, item *index.Item) error 
 		}
 	}
 
+	title := cleanTitleForSearch(item.Name, s.userPatterns)
+
 	switch item.Type {
 	case index.TypeMovie:
-		result, err := s.tmdb.SearchMovie(ctx, item.Name, year)
+		result, err := s.tmdb.SearchMovie(ctx, title, year)
 		if err != nil {
 			return err
 		}
@@ -486,7 +523,7 @@ func (s *Scheduler) resolveByTitle(ctx context.Context, item *index.Item) error 
 			item.TMDBId = strconv.Itoa(result.ID)
 		}
 	case index.TypeSeries:
-		result, err := s.tmdb.SearchTV(ctx, item.Name, year)
+		result, err := s.tmdb.SearchTV(ctx, title, year)
 		if err != nil {
 			return err
 		}

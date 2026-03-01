@@ -11,6 +11,9 @@ web/node_modules/
 web/dist/
 internal/web/dist/
 
+# Logs
+*.log
+
 # OS
 .DS_Store
 

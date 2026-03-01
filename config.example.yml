@@ -15,6 +15,9 @@ sync:
   interval: "6h"           # How often to refresh Xtream catalog
   on_startup: true         # Sync immediately on start
   parallelism: 10          # Concurrent workers for series fetch and TMDB enrichment (1-20)
+  # title_cleanup_patterns:  # Regex patterns removed from stream names before TMDB search
+  #   - '\s*\(NL GESPROKEN\)'
+  #   - '\s*\[DUBBED\]'
 
 server:
   newznab_port: 7878       # Newznab indexer API port

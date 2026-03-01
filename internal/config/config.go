@@ -35,9 +35,10 @@ type OutputConfig struct {
 }
 
 type SyncConfig struct {
-	Interval    string `yaml:"interval"`
-	OnStartup   bool   `yaml:"on_startup"`
-	Parallelism int    `yaml:"parallelism"`
+	Interval             string   `yaml:"interval"`
+	OnStartup            bool     `yaml:"on_startup"`
+	Parallelism          int      `yaml:"parallelism"`
+	TitleCleanupPatterns []string `yaml:"title_cleanup_patterns,omitempty"`
 
 	// Parsed interval (not from YAML directly)
 	ParsedInterval time.Duration `yaml:"-"`

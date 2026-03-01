@@ -141,6 +141,33 @@ func TestValidateOK(t *testing.T) {
 	}
 }
 
+func TestTitleCleanupPatternsRoundTrip(t *testing.T) {
+	patterns := []string{`\s*\(NL GESPROKEN\)`, `\s*\[HD\]`}
+	cfg := minimalConfig()
+	cfg.Sync.TitleCleanupPatterns = patterns
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+
+	if err := Save(path, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(loaded.Sync.TitleCleanupPatterns) != len(patterns) {
+		t.Fatalf("TitleCleanupPatterns len = %d, want %d", len(loaded.Sync.TitleCleanupPatterns), len(patterns))
+	}
+	for i, p := range patterns {
+		if loaded.Sync.TitleCleanupPatterns[i] != p {
+			t.Errorf("pattern[%d] = %q, want %q", i, loaded.Sync.TitleCleanupPatterns[i], p)
+		}
+	}
+}
+
 func minimalConfig() *Config {
 	return &Config{
 		Xtream: XtreamConfig{
