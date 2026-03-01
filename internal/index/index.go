@@ -1,6 +1,8 @@
 package index
 
 import (
+	"cmp"
+	"slices"
 	"sync"
 )
 
@@ -56,17 +58,19 @@ type EpisodeItem struct {
 type Index struct {
 	mu sync.RWMutex
 
-	byIMDB  map[string][]*Item
-	byTVDB  map[string][]*Item
-	byTMDB  map[string][]*Item
-	allItems []*Item
+	byIMDB    map[string][]*Item
+	byTVDB    map[string][]*Item
+	byTMDB    map[string][]*Item
+	byXtream  map[int]*Item // 5E: O(1) lookup by Xtream stream/series ID
+	allItems  []*Item
 }
 
 func New() *Index {
 	return &Index{
-		byIMDB: make(map[string][]*Item),
-		byTVDB: make(map[string][]*Item),
-		byTMDB: make(map[string][]*Item),
+		byIMDB:   make(map[string][]*Item),
+		byTVDB:   make(map[string][]*Item),
+		byTMDB:   make(map[string][]*Item),
+		byXtream: make(map[int]*Item),
 	}
 }
 
@@ -75,6 +79,7 @@ func (idx *Index) Replace(items []*Item) {
 	byIMDB := make(map[string][]*Item)
 	byTVDB := make(map[string][]*Item)
 	byTMDB := make(map[string][]*Item)
+	byXtream := make(map[int]*Item)
 
 	for _, item := range items {
 		item.normalizedTitle = normalizeTitle(item.Name)
@@ -88,35 +93,56 @@ func (idx *Index) Replace(items []*Item) {
 		if item.TMDBId != "" {
 			byTMDB[item.TMDBId] = append(byTMDB[item.TMDBId], item)
 		}
+		if item.XtreamID > 0 {
+			byXtream[item.XtreamID] = item
+		}
 	}
 
 	idx.mu.Lock()
 	idx.byIMDB = byIMDB
 	idx.byTVDB = byTVDB
 	idx.byTMDB = byTMDB
+	idx.byXtream = byXtream
 	idx.allItems = items
 	idx.mu.Unlock()
 }
 
-// SearchByIMDB returns items matching the given IMDB ID.
+// SearchByXtreamID returns the item for the given Xtream stream/series ID (5E).
+func (idx *Index) SearchByXtreamID(id int) *Item {
+	idx.mu.RLock()
+	item := idx.byXtream[id]
+	idx.mu.RUnlock()
+	return item
+}
+
+// SearchByIMDB returns a copy of items matching the given IMDB ID (4E).
 func (idx *Index) SearchByIMDB(id string) []*Item {
 	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-	return idx.byIMDB[id]
+	src := idx.byIMDB[id]
+	out := make([]*Item, len(src))
+	copy(out, src)
+	idx.mu.RUnlock()
+	return out
 }
 
-// SearchByTVDB returns items matching the given TVDB ID.
+// SearchByTVDB returns a copy of items matching the given TVDB ID (4E).
 func (idx *Index) SearchByTVDB(id string) []*Item {
 	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-	return idx.byTVDB[id]
+	src := idx.byTVDB[id]
+	out := make([]*Item, len(src))
+	copy(out, src)
+	idx.mu.RUnlock()
+	return out
 }
 
-// SearchByTMDB returns items matching the given TMDB ID.
+// SearchByTMDB returns a copy of items matching the given TMDB ID (4E).
 func (idx *Index) SearchByTMDB(id string) []*Item {
 	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-	return idx.byTMDB[id]
+	src := idx.byTMDB[id]
+	out := make([]*Item, len(src))
+	copy(out, src)
+	idx.mu.RUnlock()
+	return out
 }
 
 // SearchByTitle returns items whose title fuzzy-matches the query.
@@ -187,15 +213,10 @@ type scored struct {
 	score float64
 }
 
-// sortByScore is a simple insertion sort for small slices.
+// sortByScore sorts candidates descending by score using slices.SortFunc (4F).
 func sortByScore(candidates []scored) {
-	for i := 1; i < len(candidates); i++ {
-		key := candidates[i]
-		j := i - 1
-		for j >= 0 && candidates[j].score < key.score {
-			candidates[j+1] = candidates[j]
-			j--
-		}
-		candidates[j+1] = key
-	}
+	slices.SortFunc(candidates, func(a, b scored) int {
+		// Descending: higher score first
+		return cmp.Compare(b.score, a.score)
+	})
 }

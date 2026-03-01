@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
+	gosync "sync"
 	"time"
 
 	"github.com/vodarr/vodarr/internal/config"
@@ -26,9 +28,9 @@ type Status struct {
 
 // Progress tracks current sync progress.
 type Progress struct {
-	Stage     string `json:"stage"`
-	Current   int    `json:"current"`
-	Total     int    `json:"total"`
+	Stage   string `json:"stage"`
+	Current int    `json:"current"`
+	Total   int    `json:"total"`
 }
 
 // Scheduler manages periodic syncing of the Xtream catalog into the index.
@@ -38,8 +40,10 @@ type Scheduler struct {
 	tmdb   *tmdb.Client
 	idx    *index.Index
 
-	status Status
-	cancel context.CancelFunc
+	mu      gosync.RWMutex // 3A: protects status field
+	syncMu  gosync.Mutex   // 3B: serialises concurrent Sync calls
+	status  Status
+	cancel  context.CancelFunc
 }
 
 func NewScheduler(cfg *config.Config, xc *xtream.Client, tc *tmdb.Client, idx *index.Index) *Scheduler {
@@ -77,27 +81,40 @@ func (s *Scheduler) Stop() {
 // Status returns the current sync status (safe for concurrent reads).
 func (s *Scheduler) Status() Status {
 	movies, series := s.idx.Counts()
+	s.mu.RLock()
 	st := s.status
+	s.mu.RUnlock()
 	st.TotalMovies = movies
 	st.TotalSeries = series
 	return st
 }
 
 // Sync performs a full catalog sync: fetch → enrich → replace index.
+// If a sync is already in progress, this call returns immediately (3B).
 func (s *Scheduler) Sync(ctx context.Context) error {
-	s.status.Running = true
-	s.status.Error = ""
+	// 3B: Try to acquire the sync mutex; skip if already running
+	if !s.syncMu.TryLock() {
+		slog.Info("sync already in progress, skipping")
+		return nil
+	}
+	defer s.syncMu.Unlock()
+
+	s.setRunning(true, "")
 	slog.Info("sync started")
 
 	defer func() {
-		s.status.Running = false
+		s.setRunning(false, "")
+		s.mu.Lock()
 		s.status.LastSync = time.Now()
 		s.status.NextSync = time.Now().Add(s.cfg.Sync.ParsedInterval)
+		s.mu.Unlock()
 	}()
 
 	items, err := s.fetchAll(ctx)
 	if err != nil {
+		s.mu.Lock()
 		s.status.Error = err.Error()
+		s.mu.Unlock()
 		return fmt.Errorf("fetch: %w", err)
 	}
 
@@ -111,6 +128,15 @@ func (s *Scheduler) Sync(ctx context.Context) error {
 	movies, series := s.idx.Counts()
 	slog.Info("sync complete", "movies", movies, "series", series)
 	return nil
+}
+
+func (s *Scheduler) setRunning(running bool, errMsg string) {
+	s.mu.Lock()
+	s.status.Running = running
+	if !running {
+		s.status.Error = errMsg
+	}
+	s.mu.Unlock()
 }
 
 func (s *Scheduler) loop(ctx context.Context) {
@@ -135,7 +161,7 @@ func (s *Scheduler) fetchAll(ctx context.Context) ([]*index.Item, error) {
 
 	// --- VOD ---
 	s.setProgress("Fetching VOD catalog", 0, 0)
-	streams, err := s.xtream.GetVODStreams("")
+	streams, err := s.xtream.GetVODStreams(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("get vod streams: %w", err)
 	}
@@ -167,7 +193,7 @@ func (s *Scheduler) fetchAll(ctx context.Context) ([]*index.Item, error) {
 
 	// --- Series ---
 	s.setProgress("Fetching series catalog", 0, 0)
-	series, err := s.xtream.GetSeries("")
+	series, err := s.xtream.GetSeries(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("get series: %w", err)
 	}
@@ -193,7 +219,7 @@ func (s *Scheduler) fetchAll(ctx context.Context) ([]*index.Item, error) {
 			item.TMDBId = strconv.Itoa(sr.TMDBId.Int())
 		}
 		// Fetch episodes
-		if info, err := s.xtream.GetSeriesInfo(sr.SeriesID.Int()); err == nil {
+		if info, err := s.xtream.GetSeriesInfo(ctx, sr.SeriesID.Int()); err == nil {
 			for seasonStr, eps := range info.Episodes {
 				season, _ := strconv.Atoi(seasonStr)
 				for _, ep := range eps {
@@ -206,6 +232,16 @@ func (s *Scheduler) fetchAll(ctx context.Context) ([]*index.Item, error) {
 					})
 				}
 			}
+			// 5D: Sort episodes by season then episode number for consistent ordering
+			sort.Slice(item.Episodes, func(i, j int) bool {
+				if item.Episodes[i].Season != item.Episodes[j].Season {
+					return item.Episodes[i].Season < item.Episodes[j].Season
+				}
+				return item.Episodes[i].EpisodeNum < item.Episodes[j].EpisodeNum
+			})
+		} else {
+			// 4D: Log series info fetch failures
+			slog.Warn("series info fetch failed", "series_id", sr.SeriesID.Int(), "error", err)
 		}
 		items = append(items, item)
 	}
@@ -243,9 +279,9 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item) ([]*index.I
 		var extIDs *tmdb.ExternalIDs
 		switch item.Type {
 		case index.TypeMovie:
-			extIDs, err = s.tmdb.GetMovieExternalIDs(tmdbID)
+			extIDs, err = s.tmdb.GetMovieExternalIDs(ctx, tmdbID)
 		case index.TypeSeries:
-			extIDs, err = s.tmdb.GetTVExternalIDs(tmdbID)
+			extIDs, err = s.tmdb.GetTVExternalIDs(ctx, tmdbID)
 		}
 		if err != nil {
 			lastErr = err
@@ -277,7 +313,7 @@ func (s *Scheduler) resolveByTitle(item *index.Item) error {
 
 	switch item.Type {
 	case index.TypeMovie:
-		result, err := s.tmdb.SearchMovie(item.Name, year)
+		result, err := s.tmdb.SearchMovie(context.Background(), item.Name, year)
 		if err != nil {
 			return err
 		}
@@ -285,7 +321,7 @@ func (s *Scheduler) resolveByTitle(item *index.Item) error {
 			item.TMDBId = strconv.Itoa(result.ID)
 		}
 	case index.TypeSeries:
-		result, err := s.tmdb.SearchTV(item.Name, year)
+		result, err := s.tmdb.SearchTV(context.Background(), item.Name, year)
 		if err != nil {
 			return err
 		}
@@ -297,5 +333,7 @@ func (s *Scheduler) resolveByTitle(item *index.Item) error {
 }
 
 func (s *Scheduler) setProgress(stage string, current, total int) {
+	s.mu.Lock()
 	s.status.Progress = Progress{Stage: stage, Current: current, Total: total}
+	s.mu.Unlock()
 }

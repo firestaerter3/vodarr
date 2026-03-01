@@ -42,9 +42,15 @@ type SyncConfig struct {
 }
 
 type ServerConfig struct {
-	NewznabPort int `yaml:"newznab_port"`
-	QbitPort    int `yaml:"qbit_port"`
-	WebPort     int `yaml:"web_port"`
+	NewznabPort int    `yaml:"newznab_port"`
+	QbitPort    int    `yaml:"qbit_port"`
+	WebPort     int    `yaml:"web_port"`
+	ExternalURL string `yaml:"external_url"` // 1B: e.g. "http://vodarr:7878" — overrides localhost fallback
+	APIKey      string `yaml:"api_key"`      // 2C: Newznab API key; empty = no auth
+	QbitUsername string `yaml:"qbit_username"` // 2D: qBit web UI credentials
+	QbitPassword string `yaml:"qbit_password"`
+	WebUsername string `yaml:"web_username"` // 2E: web UI basic auth
+	WebPassword string `yaml:"web_password"`
 }
 
 type LoggingConfig struct {
@@ -110,6 +116,9 @@ func (c *Config) validate() error {
 	d, err := time.ParseDuration(c.Sync.Interval)
 	if err != nil {
 		return fmt.Errorf("sync.interval is invalid: %w", err)
+	}
+	if d <= 0 {
+		return fmt.Errorf("sync.interval must be positive")
 	}
 	c.Sync.ParsedInterval = d
 

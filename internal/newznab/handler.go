@@ -103,8 +103,17 @@ func (h *Handler) handleMovieSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	offset, _ := strconv.Atoi(q.Get("offset"))
-	h.writeRSS(w, results, offset)
+	rssItems := buildMovieRSSItems(h.serverURL, results)
+	offset, limit := parsePaging(q)
+	total := len(rssItems)
+	end := offset + limit
+	if offset > total {
+		offset = total
+	}
+	if end > total {
+		end = total
+	}
+	h.writeRSS(w, rssItems[offset:end], offset, total)
 }
 
 func (h *Handler) handleTVSearch(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +122,8 @@ func (h *Handler) handleTVSearch(w http.ResponseWriter, r *http.Request) {
 	tmdbID := q.Get("tmdbid")
 	query := q.Get("q")
 	year := q.Get("year")
+	seasonFilter, _ := strconv.Atoi(q.Get("season"))
+	epFilter, _ := strconv.Atoi(q.Get("ep"))
 
 	var results []*index.Item
 
@@ -141,8 +152,18 @@ func (h *Handler) handleTVSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	offset, _ := strconv.Atoi(q.Get("offset"))
-	h.writeRSS(w, results, offset)
+	// 1C: Expand series items into per-episode RSS items with season/episode attrs
+	rssItems := buildEpisodeRSSItems(h.serverURL, results, seasonFilter, epFilter)
+	offset, limit := parsePaging(q)
+	total := len(rssItems)
+	end := offset + limit
+	if offset > total {
+		offset = total
+	}
+	if end > total {
+		end = total
+	}
+	h.writeRSS(w, rssItems[offset:end], offset, total)
 }
 
 func (h *Handler) handleTextSearch(w http.ResponseWriter, r *http.Request) {
@@ -161,16 +182,46 @@ func (h *Handler) handleTextSearch(w http.ResponseWriter, r *http.Request) {
 	results := h.idx.SearchByTitle(query, year, mediaType, 50)
 	slog.Debug("text search", "q", query, "cat", cat, "hits", len(results))
 
-	offset, _ := strconv.Atoi(q.Get("offset"))
-	h.writeRSS(w, results, offset)
+	// Build RSS items: movies one-per-item, series per-episode
+	var rssItems []Item
+	if mediaType == index.TypeSeries {
+		rssItems = buildEpisodeRSSItems(h.serverURL, results, 0, 0)
+	} else if mediaType == index.TypeMovie {
+		rssItems = buildMovieRSSItems(h.serverURL, results)
+	} else {
+		// Mixed: separate movies from series
+		var movies, seriesItems []*index.Item
+		for _, item := range results {
+			if item.Type == index.TypeMovie {
+				movies = append(movies, item)
+			} else {
+				seriesItems = append(seriesItems, item)
+			}
+		}
+		rssItems = append(buildMovieRSSItems(h.serverURL, movies),
+			buildEpisodeRSSItems(h.serverURL, seriesItems, 0, 0)...)
+	}
+
+	offset, limit := parsePaging(q)
+	total := len(rssItems)
+	end := offset + limit
+	if offset > total {
+		offset = total
+	}
+	if end > total {
+		end = total
+	}
+	h.writeRSS(w, rssItems[offset:end], offset, total)
 }
 
 // handleGet returns a small JSON descriptor that the qBit handler uses
 // when Sonarr/Radarr send a "grab" request.
+// 1C: Accepts episode_id param to return a single-episode descriptor.
 func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	idStr := q.Get("id")
 	mediaType := q.Get("type")
+	episodeIDStr := q.Get("episode_id")
 
 	id, err := strconv.Atoi(idStr)
 	if err != nil || id <= 0 {
@@ -178,18 +229,33 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find item
-	var found *index.Item
-	for _, item := range h.idx.All() {
-		if item.XtreamID == id && (mediaType == "" || string(item.Type) == mediaType) {
-			found = item
-			break
-		}
+	episodeID, _ := strconv.Atoi(episodeIDStr)
+
+	// 5E: O(1) lookup by XtreamID instead of O(n) scan
+	found := h.idx.SearchByXtreamID(id)
+	if found != nil && mediaType != "" && string(found.Type) != mediaType {
+		found = nil // type mismatch
 	}
 
 	if found == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
+	}
+
+	// If episode_id is given, filter episodes to just that one
+	episodes := found.Episodes
+	if episodeID > 0 {
+		episodes = nil
+		for _, ep := range found.Episodes {
+			if ep.EpisodeID == episodeID {
+				episodes = []index.EpisodeItem{ep}
+				break
+			}
+		}
+		if len(episodes) == 0 {
+			http.Error(w, "episode not found", http.StatusNotFound)
+			return
+		}
 	}
 
 	// Return JSON descriptor — qBit handler will parse this
@@ -202,16 +268,32 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 		"tvdb_id":       found.TVDBId,
 		"tmdb_id":       found.TMDBId,
 		"container_ext": found.ContainerExt,
-		"episodes":      found.Episodes,
+		"episodes":      episodes,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(desc)
 }
 
-func (h *Handler) writeRSS(w http.ResponseWriter, items []*index.Item, offset int) {
-	rss := buildRSS(h.serverURL, items, offset, len(items))
+func (h *Handler) writeRSS(w http.ResponseWriter, items []Item, offset, total int) {
+	rss := buildRSS(h.serverURL, items, offset, total)
 	h.writeXML(w, rss)
+}
+
+// parsePaging extracts offset and limit from query params with sane defaults.
+func parsePaging(q interface{ Get(string) string }) (offset, limit int) {
+	offset, _ = strconv.Atoi(q.Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	limit, _ = strconv.Atoi(q.Get("limit"))
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	return
 }
 
 func (h *Handler) writeXML(w http.ResponseWriter, v interface{}) {

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"io/fs"
 	"log/slog"
@@ -14,13 +15,17 @@ import (
 type Handler struct {
 	idx       *index.Index
 	scheduler *sync.Scheduler
+	username  string // 2E: optional basic auth for API endpoints
+	password  string
 	mux       *http.ServeMux
 }
 
-func NewHandler(idx *index.Index, scheduler *sync.Scheduler, staticFS fs.FS) *Handler {
+func NewHandler(idx *index.Index, scheduler *sync.Scheduler, staticFS fs.FS, username, password string) *Handler {
 	h := &Handler{
 		idx:       idx,
 		scheduler: scheduler,
+		username:  username,
+		password:  password,
 		mux:       http.NewServeMux(),
 	}
 	h.registerRoutes(staticFS)
@@ -28,17 +33,44 @@ func NewHandler(idx *index.Index, scheduler *sync.Scheduler, staticFS fs.FS) *Ha
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// 5C: CORS headers for local dev (Vite dev server on different port)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	h.mux.ServeHTTP(w, r)
 }
 
+// requireAuth wraps a handler with HTTP Basic Auth when credentials are configured.
+func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.username == "" {
+			next(w, r)
+			return
+		}
+		u, p, ok := r.BasicAuth()
+		if !ok || u != h.username || p != h.password {
+			w.Header().Set("WWW-Authenticate", `Basic realm="VODarr"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
 func (h *Handler) registerRoutes(staticFS fs.FS) {
-	h.mux.HandleFunc("GET /api/status", h.handleStatus)
-	h.mux.HandleFunc("POST /api/sync", h.handleSync)
-	h.mux.HandleFunc("GET /api/content/movies", h.handleMovies)
-	h.mux.HandleFunc("GET /api/content/series", h.handleSeries)
-	h.mux.HandleFunc("GET /api/config", h.handleGetConfig)
-	h.mux.HandleFunc("PUT /api/config", h.handlePutConfig)
-	h.mux.HandleFunc("GET /api/health", h.handleHealth)
+	auth := h.requireAuth
+
+	h.mux.HandleFunc("GET /api/status", auth(h.handleStatus))
+	h.mux.HandleFunc("POST /api/sync", auth(h.handleSync))
+	h.mux.HandleFunc("GET /api/content/movies", auth(h.handleMovies))
+	h.mux.HandleFunc("GET /api/content/series", auth(h.handleSeries))
+	h.mux.HandleFunc("GET /api/config", auth(h.handleGetConfig))
+	h.mux.HandleFunc("PUT /api/config", auth(h.handlePutConfig))
+	h.mux.HandleFunc("GET /api/health", h.handleHealth) // health always public
 
 	// Serve embedded static frontend; fall back to index.html for SPA routing
 	if staticFS != nil {
@@ -68,7 +100,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request) {
 	go func() {
-		if err := h.scheduler.Sync(r.Context()); err != nil {
+		if err := h.scheduler.Sync(context.Background()); err != nil {
 			slog.Error("manual sync failed", "error", err)
 		}
 	}()

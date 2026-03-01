@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Writer creates .strm files in the configured output directory.
@@ -59,12 +60,25 @@ func (w *Writer) WriteEpisode(seriesName string, season, episode int, title, str
 }
 
 func (w *Writer) write(dir, filename, content string) (string, error) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("mkdir %s: %w", dir, err)
+	// 2B: Verify the resolved path is still under the output directory
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("abs path: %w", err)
+	}
+	absOutput, err := filepath.Abs(w.outputPath)
+	if err != nil {
+		return "", fmt.Errorf("abs output path: %w", err)
+	}
+	if !strings.HasPrefix(absDir+string(filepath.Separator), absOutput+string(filepath.Separator)) {
+		return "", fmt.Errorf("path traversal detected: %s escapes output directory", dir)
 	}
 
-	path := filepath.Join(dir, filename)
-	if err := os.WriteFile(path, []byte(content+"\n"), 0644); err != nil {
+	if err := os.MkdirAll(absDir, 0755); err != nil {
+		return "", fmt.Errorf("mkdir %s: %w", absDir, err)
+	}
+
+	path := filepath.Join(absDir, filename)
+	if err := os.WriteFile(path, []byte(content+"\n"), 0600); err != nil {
 		return "", fmt.Errorf("write strm %s: %w", path, err)
 	}
 	return path, nil
@@ -72,18 +86,40 @@ func (w *Writer) write(dir, filename, content string) (string, error) {
 
 var illegalChars = regexp.MustCompile(`[<>:"/\\|?*]`)
 
+const maxNameLen = 200
+
 // folderSafe returns a filesystem-safe folder name (spaces preserved).
 func folderSafe(s string) string {
+	s = stripControlChars(s)
 	s = illegalChars.ReplaceAllString(s, "")
+	// 2B: Remove path traversal sequences
+	for strings.Contains(s, "..") {
+		s = strings.ReplaceAll(s, "..", ".")
+	}
 	s = strings.TrimSpace(s)
+	if len(s) > maxNameLen {
+		s = s[:maxNameLen]
+	}
 	return s
+}
+
+// stripControlChars removes ASCII control characters (< 0x20) and null bytes.
+func stripControlChars(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0 || unicode.Is(unicode.Cc, r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // fileSafe returns a dot-separated filename-safe string.
 func fileSafe(s string) string {
 	s = illegalChars.ReplaceAllString(s, "")
 	s = strings.ReplaceAll(s, " ", ".")
-	s = strings.ReplaceAll(s, "..", ".")
+	for strings.Contains(s, "..") {
+		s = strings.ReplaceAll(s, "..", ".")
+	}
 	s = strings.Trim(s, ".")
 	return s
 }

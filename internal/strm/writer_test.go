@@ -84,11 +84,70 @@ func TestFileSafe(t *testing.T) {
 		{"Blade Runner 2049", "Blade.Runner.2049"},
 		{"S.W.A.T.", "S.W.A.T"},
 		{"Movie: Subtitle", "Movie.Subtitle"}, // colon stripped, space → dot
+		// 4B: double-dot edge cases
+		{"A..B", "A.B"},
+		{"A...B", "A.B"},
+		{"..", ""},
+		{"...foo...", "foo"},
 	}
 	for _, c := range cases {
 		got := fileSafe(c.in)
 		if got != c.want {
 			t.Errorf("fileSafe(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func TestPathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir, "movies", "tv")
+
+	// Names with ".." are sanitized by folderSafe — they succeed safely (not traversal)
+	path, err := w.WriteMovie("../evil", "2024", "http://x/1.mkv")
+	if err != nil {
+		t.Errorf("WriteMovie with ../evil: unexpected error: %v", err)
+	}
+	// Verify the file is inside the output directory
+	if !strings.HasPrefix(path, dir) {
+		t.Errorf("WriteMovie path %q escapes output dir %q", path, dir)
+	}
+
+	// Defense-in-depth: write() with a raw path escaping output dir must fail
+	_, err = w.write(dir+"/../escaped", "test.strm", "http://x/1.mkv")
+	if err == nil {
+		t.Error("write with path escaping output dir: expected error, got nil")
+	}
+}
+
+func TestFolderSafe(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"Normal Title", "Normal Title"},
+		{"../hack", ".hack"},  // .. collapsed to .
+		{"A/B", "AB"},         // slash stripped
+		{"\x00null\x01ctrl", "nullctrl"}, // control chars stripped
+	}
+	for _, c := range cases {
+		got := folderSafe(c.in)
+		if got != c.want {
+			t.Errorf("folderSafe(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestStrmFilePermissions(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir, "movies", "tv")
+
+	path, err := w.WriteMovie("PermTest", "2024", "http://x/1.mkv")
+	if err != nil {
+		t.Fatalf("WriteMovie: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	perm := info.Mode().Perm()
+	if perm != 0600 {
+		t.Errorf("file permissions = %04o, want 0600", perm)
 	}
 }

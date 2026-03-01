@@ -111,8 +111,8 @@ func buildCaps(serverURL string) *CapsResponse {
 		Limits: CapsLimits{Max: 100, Default: 50},
 		Searching: CapsSearcing{
 			Search:   CapsSearch{Available: "yes", SupportedParams: "q"},
-			TVSearch: CapsSearch{Available: "yes", SupportedParams: "q,tvdbid,season,ep"},
-			Movie:    CapsSearch{Available: "yes", SupportedParams: "q,imdbid"},
+			TVSearch: CapsSearch{Available: "yes", SupportedParams: "q,tvdbid,tmdbid,season,ep"},
+			Movie:    CapsSearch{Available: "yes", SupportedParams: "q,imdbid,tmdbid"},
 		},
 		Categories: CapsCategories{
 			Category: []CapsCategory{
@@ -130,12 +130,9 @@ func buildCaps(serverURL string) *CapsResponse {
 	}
 }
 
-func buildRSS(serverURL string, items []*index.Item, offset, total int) *RSS {
-	rssItems := make([]Item, 0, len(items))
-	for _, item := range items {
-		rssItems = append(rssItems, itemToRSS(serverURL, item))
-	}
-
+// buildRSS constructs an RSS feed from pre-expanded RSS items.
+// Callers are responsible for pagination slicing; offset/total are for the <newznab:response> element.
+func buildRSS(serverURL string, rssItems []Item, offset, total int) *RSS {
 	return &RSS{
 		Version: "2.0",
 		NZB:     "http://www.newzbin.com/DTD/2007/feeds/NZB/",
@@ -149,6 +146,93 @@ func buildRSS(serverURL string, items []*index.Item, offset, total int) *RSS {
 			Items:       rssItems,
 		},
 	}
+}
+
+// buildMovieRSSItems converts movie index items to RSS items.
+func buildMovieRSSItems(serverURL string, items []*index.Item) []Item {
+	out := make([]Item, 0, len(items))
+	for _, item := range items {
+		out = append(out, itemToRSS(serverURL, item))
+	}
+	return out
+}
+
+// buildEpisodeRSSItems expands series index items into per-episode RSS items.
+// seasonFilter / epFilter == 0 means no filter.
+func buildEpisodeRSSItems(serverURL string, items []*index.Item, seasonFilter, epFilter int) []Item {
+	var out []Item
+	for _, item := range items {
+		for _, ep := range item.Episodes {
+			if seasonFilter > 0 && ep.Season != seasonFilter {
+				continue
+			}
+			if epFilter > 0 && ep.EpisodeNum != epFilter {
+				continue
+			}
+			out = append(out, episodeToRSS(serverURL, item, ep))
+		}
+		// If the series has no episodes indexed yet, emit one placeholder per series
+		if len(item.Episodes) == 0 {
+			out = append(out, itemToRSS(serverURL, item))
+		}
+	}
+	return out
+}
+
+// episodeToRSS converts a single episode to an RSS item.
+func episodeToRSS(serverURL string, series *index.Item, ep index.EpisodeItem) Item {
+	size := int64(1024 * 1024 * 1024)
+	epTag := fmt.Sprintf("S%02dE%02d", ep.Season, ep.EpisodeNum)
+	guid := fmt.Sprintf("vodarr-ep-%d-%d-%d", series.XtreamID, ep.Season, ep.EpisodeNum)
+	downloadURL := fmt.Sprintf("%s/api?t=get&id=%d&type=series&episode_id=%d",
+		serverURL, series.XtreamID, ep.EpisodeID)
+
+	seriesSafe := strings.ReplaceAll(series.Name, " ", ".")
+	seriesSafe = strings.ReplaceAll(seriesSafe, ":", "")
+	seriesSafe = strings.ReplaceAll(seriesSafe, "/", "")
+
+	epTitle := ep.Title
+	if epTitle != "" {
+		epTitle = "." + strings.ReplaceAll(epTitle, " ", ".")
+	}
+	ext := ep.Ext
+	if ext == "" {
+		ext = "mkv"
+	}
+	title := fmt.Sprintf("%s.%s%s.WEB-DL.%s", seriesSafe, epTag, epTitle, ext)
+
+	rssItem := Item{
+		Title:       title,
+		GUID:        guid,
+		Link:        downloadURL,
+		PubDate:     time.Now().UTC().Format(time.RFC1123Z),
+		Description: series.Plot,
+		Size:        size,
+		Enclosure: Enclosure{
+			URL:    downloadURL,
+			Length: size,
+			Type:   "application/x-nzb",
+		},
+		Attrs: []Attr{
+			{Name: "category", Value: "5000"},
+			{Name: "category", Value: "TV"},
+			{Name: "size", Value: strconv.FormatInt(size, 10)},
+			{Name: "season", Value: strconv.Itoa(ep.Season)},
+			{Name: "episode", Value: strconv.Itoa(ep.EpisodeNum)},
+		},
+	}
+
+	if series.TVDBId != "" {
+		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "tvdbid", Value: series.TVDBId})
+	}
+	if series.TMDBId != "" {
+		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "tmdbid", Value: series.TMDBId})
+	}
+	if series.IMDBId != "" {
+		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "imdbid", Value: series.IMDBId})
+	}
+
+	return rssItem
 }
 
 func itemToRSS(serverURL string, item *index.Item) Item {

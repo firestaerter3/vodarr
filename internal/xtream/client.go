@@ -1,8 +1,10 @@
 package xtream
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -162,97 +164,102 @@ type EpisodeInfo struct {
 }
 
 // Authenticate validates the credentials and returns server info.
-func (c *Client) Authenticate() (*UserInfo, error) {
+func (c *Client) Authenticate(ctx context.Context) (*UserInfo, error) {
 	var info UserInfo
-	if err := c.apiGet("", nil, &info); err != nil {
+	if err := c.apiGet(ctx, "", nil, &info); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
 	}
 	return &info, nil
 }
 
 // GetVODCategories returns all VOD categories.
-func (c *Client) GetVODCategories() ([]Category, error) {
+func (c *Client) GetVODCategories(ctx context.Context) ([]Category, error) {
 	var cats []Category
-	if err := c.apiGet("get_vod_categories", nil, &cats); err != nil {
+	if err := c.apiGet(ctx, "get_vod_categories", nil, &cats); err != nil {
 		return nil, fmt.Errorf("get vod categories: %w", err)
 	}
 	return cats, nil
 }
 
 // GetVODStreams returns all VOD streams, optionally filtered by category.
-func (c *Client) GetVODStreams(categoryID string) ([]VODStream, error) {
+func (c *Client) GetVODStreams(ctx context.Context, categoryID string) ([]VODStream, error) {
 	params := url.Values{}
 	if categoryID != "" {
 		params.Set("category_id", categoryID)
 	}
 	var streams []VODStream
-	if err := c.apiGet("get_vod_streams", params, &streams); err != nil {
+	if err := c.apiGet(ctx, "get_vod_streams", params, &streams); err != nil {
 		return nil, fmt.Errorf("get vod streams: %w", err)
 	}
 	return streams, nil
 }
 
 // GetVODInfo returns detailed information about a specific VOD stream.
-func (c *Client) GetVODInfo(id int) (*VODInfo, error) {
+func (c *Client) GetVODInfo(ctx context.Context, id int) (*VODInfo, error) {
 	params := url.Values{"vod_id": {strconv.Itoa(id)}}
 	var info VODInfo
-	if err := c.apiGet("get_vod_info", params, &info); err != nil {
+	if err := c.apiGet(ctx, "get_vod_info", params, &info); err != nil {
 		return nil, fmt.Errorf("get vod info %d: %w", id, err)
 	}
 	return &info, nil
 }
 
 // GetSeriesCategories returns all series categories.
-func (c *Client) GetSeriesCategories() ([]Category, error) {
+func (c *Client) GetSeriesCategories(ctx context.Context) ([]Category, error) {
 	var cats []Category
-	if err := c.apiGet("get_series_categories", nil, &cats); err != nil {
+	if err := c.apiGet(ctx, "get_series_categories", nil, &cats); err != nil {
 		return nil, fmt.Errorf("get series categories: %w", err)
 	}
 	return cats, nil
 }
 
 // GetSeries returns all series, optionally filtered by category.
-func (c *Client) GetSeries(categoryID string) ([]Series, error) {
+func (c *Client) GetSeries(ctx context.Context, categoryID string) ([]Series, error) {
 	params := url.Values{}
 	if categoryID != "" {
 		params.Set("category_id", categoryID)
 	}
 	var series []Series
-	if err := c.apiGet("get_series", params, &series); err != nil {
+	if err := c.apiGet(ctx, "get_series", params, &series); err != nil {
 		return nil, fmt.Errorf("get series: %w", err)
 	}
 	return series, nil
 }
 
 // GetSeriesInfo returns detailed information about a specific series.
-func (c *Client) GetSeriesInfo(id int) (*SeriesInfo, error) {
+func (c *Client) GetSeriesInfo(ctx context.Context, id int) (*SeriesInfo, error) {
 	params := url.Values{"series_id": {strconv.Itoa(id)}}
 	var info SeriesInfo
-	if err := c.apiGet("get_series_info", params, &info); err != nil {
+	if err := c.apiGet(ctx, "get_series_info", params, &info); err != nil {
 		return nil, fmt.Errorf("get series info %d: %w", id, err)
 	}
 	return &info, nil
 }
 
 // StreamURL builds the stream URL for a VOD item.
+// Credentials are path-escaped to handle special characters safely (4H).
 func (c *Client) StreamURL(streamID int, ext string) string {
 	if ext == "" {
 		ext = "mkv"
 	}
 	return fmt.Sprintf("%s/movie/%s/%s/%d.%s",
-		c.baseURL, c.username, c.password, streamID, ext)
+		c.baseURL, url.PathEscape(c.username), url.PathEscape(c.password), streamID, ext)
 }
 
 // SeriesStreamURL builds the stream URL for a series episode.
+// Credentials are path-escaped to handle special characters safely (4H).
 func (c *Client) SeriesStreamURL(episodeID int, ext string) string {
 	if ext == "" {
 		ext = "mkv"
 	}
 	return fmt.Sprintf("%s/series/%s/%s/%d.%s",
-		c.baseURL, c.username, c.password, episodeID, ext)
+		c.baseURL, url.PathEscape(c.username), url.PathEscape(c.password), episodeID, ext)
 }
 
-func (c *Client) apiGet(action string, params url.Values, out interface{}) error {
+// xtreamCatalogMaxBytes is the maximum catalog response size we'll read.
+const xtreamCatalogMaxBytes = 100 << 20 // 100 MB
+
+func (c *Client) apiGet(ctx context.Context, action string, params url.Values, out interface{}) error {
 	u := fmt.Sprintf("%s/player_api.php", c.baseURL)
 
 	q := url.Values{
@@ -268,22 +275,43 @@ func (c *Client) apiGet(action string, params url.Values, out interface{}) error
 		}
 	}
 
-	req, err := http.NewRequest(http.MethodGet, u+"?"+q.Encode(), nil)
+	// 4I: Use context-aware request
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u+"?"+q.Encode(), nil)
 	if err != nil {
 		return err
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("http get: %w", err)
+		// 2G: Sanitize error to avoid leaking credentials from URL
+		return fmt.Errorf("http get %s: %w", sanitizeURL(u), err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+		return fmt.Errorf("unexpected status %d for %s", resp.StatusCode, sanitizeURL(u))
 	}
 
-	return json.NewDecoder(resp.Body).Decode(out)
+	// 2H: Limit catalog response body size
+	return json.NewDecoder(io.LimitReader(resp.Body, xtreamCatalogMaxBytes)).Decode(out)
+}
+
+// sanitizeURL strips username and password query params from a URL string
+// to prevent credential leakage in error messages.
+func sanitizeURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "<invalid url>"
+	}
+	q := u.Query()
+	if q.Get("username") != "" {
+		q.Set("username", "<redacted>")
+	}
+	if q.Get("password") != "" {
+		q.Set("password", "<redacted>")
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // FlexInt handles Xtream providers that send integers as strings or numbers.

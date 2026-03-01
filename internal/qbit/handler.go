@@ -2,12 +2,17 @@ package qbit
 
 import (
 	"crypto/md5"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/vodarr/vodarr/internal/strm"
 	"github.com/vodarr/vodarr/internal/xtream"
@@ -15,23 +20,57 @@ import (
 
 // Handler impersonates the qBittorrent Web API v2.
 type Handler struct {
-	store    *Store
-	writer   *strm.Writer
-	xtream   *xtream.Client
-	savePath string
-	mux      *http.ServeMux
+	store         *Store
+	writer        *strm.Writer
+	xtream        *xtream.Client
+	savePath      string
+	username      string // 2D: optional credentials; empty = no auth
+	password      string
+	mu            sync.RWMutex
+	sessions      map[string]struct{} // active session IDs
+	descriptorCli *http.Client        // 2A+3D: dedicated client for descriptor fetches
+	mux           *http.ServeMux
 }
 
-func NewHandler(store *Store, writer *strm.Writer, xc *xtream.Client, savePath string) *Handler {
+func NewHandler(store *Store, writer *strm.Writer, xc *xtream.Client, savePath, username, password string) *Handler {
 	h := &Handler{
 		store:    store,
 		writer:   writer,
 		xtream:   xc,
 		savePath: savePath,
-		mux:      http.NewServeMux(),
+		username: username,
+		password: password,
+		sessions: make(map[string]struct{}),
+		// 2A+3D: dedicated HTTP client for descriptor fetches
+		descriptorCli: &http.Client{Timeout: 10 * time.Second},
+		mux:            http.NewServeMux(),
 	}
 	h.registerRoutes()
 	return h
+}
+
+// authMiddleware checks the SID cookie when credentials are configured.
+// The login endpoint is excluded.
+func (h *Handler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.username == "" {
+			next(w, r)
+			return
+		}
+		cookie, err := r.Cookie("SID")
+		if err != nil {
+			http.Error(w, "Forbidden.", http.StatusForbidden)
+			return
+		}
+		h.mu.RLock()
+		_, ok := h.sessions[cookie.Value]
+		h.mu.RUnlock()
+		if !ok {
+			http.Error(w, "Forbidden.", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -39,42 +78,65 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) registerRoutes() {
-	// Auth
+	auth := h.authMiddleware
+
+	// Auth (login is exempt from auth check)
 	h.mux.HandleFunc("POST /api/v2/auth/login", h.handleLogin)
 
 	// App info
-	h.mux.HandleFunc("GET /api/v2/app/version", h.handleAppVersion)
-	h.mux.HandleFunc("GET /api/v2/app/webapiVersion", h.handleWebapiVersion)
-	h.mux.HandleFunc("GET /api/v2/app/preferences", h.handlePreferences)
-	h.mux.HandleFunc("GET /api/v2/app/buildInfo", h.handleBuildInfo)
+	h.mux.HandleFunc("GET /api/v2/app/version", auth(h.handleAppVersion))
+	h.mux.HandleFunc("GET /api/v2/app/webapiVersion", auth(h.handleWebapiVersion))
+	h.mux.HandleFunc("GET /api/v2/app/preferences", auth(h.handlePreferences))
+	h.mux.HandleFunc("GET /api/v2/app/buildInfo", auth(h.handleBuildInfo))
 
 	// Torrents
-	h.mux.HandleFunc("POST /api/v2/torrents/add", h.handleTorrentsAdd)
-	h.mux.HandleFunc("GET /api/v2/torrents/info", h.handleTorrentsInfo)
-	h.mux.HandleFunc("GET /api/v2/torrents/properties", h.handleTorrentsProperties)
-	h.mux.HandleFunc("GET /api/v2/torrents/files", h.handleTorrentsFiles)
-	h.mux.HandleFunc("POST /api/v2/torrents/delete", h.handleTorrentsDelete)
-	h.mux.HandleFunc("POST /api/v2/torrents/pause", h.handleStub)
-	h.mux.HandleFunc("POST /api/v2/torrents/resume", h.handleStub)
-	h.mux.HandleFunc("GET /api/v2/torrents/categories", h.handleCategories)
-	h.mux.HandleFunc("POST /api/v2/torrents/createCategory", h.handleStub)
-	h.mux.HandleFunc("POST /api/v2/torrents/setCategory", h.handleStub)
-	h.mux.HandleFunc("POST /api/v2/torrents/setSavePath", h.handleStub)
+	h.mux.HandleFunc("POST /api/v2/torrents/add", auth(h.handleTorrentsAdd))
+	h.mux.HandleFunc("GET /api/v2/torrents/info", auth(h.handleTorrentsInfo))
+	h.mux.HandleFunc("GET /api/v2/torrents/properties", auth(h.handleTorrentsProperties))
+	h.mux.HandleFunc("GET /api/v2/torrents/files", auth(h.handleTorrentsFiles))
+	h.mux.HandleFunc("POST /api/v2/torrents/delete", auth(h.handleTorrentsDelete))
+	h.mux.HandleFunc("POST /api/v2/torrents/pause", auth(h.handleStub))
+	h.mux.HandleFunc("POST /api/v2/torrents/resume", auth(h.handleStub))
+	h.mux.HandleFunc("GET /api/v2/torrents/categories", auth(h.handleCategories))
+	h.mux.HandleFunc("POST /api/v2/torrents/createCategory", auth(h.handleStub))
+	h.mux.HandleFunc("POST /api/v2/torrents/setCategory", auth(h.handleStub))
+	h.mux.HandleFunc("POST /api/v2/torrents/setSavePath", auth(h.handleStub))
 
 	// Sync / transfer
-	h.mux.HandleFunc("GET /api/v2/sync/maindata", h.handleSyncMaindata)
-	h.mux.HandleFunc("GET /api/v2/transfer/info", h.handleTransferInfo)
+	h.mux.HandleFunc("GET /api/v2/sync/maindata", auth(h.handleSyncMaindata))
+	h.mux.HandleFunc("GET /api/v2/transfer/info", auth(h.handleTransferInfo))
 }
 
 // ---- Auth ----
 
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if h.username != "" {
+		r.ParseForm()
+		u := r.FormValue("username")
+		p := r.FormValue("password")
+		if u != h.username || p != h.password {
+			w.Write([]byte("Fails."))
+			return
+		}
+	}
+
+	sid := randomSID()
+	h.mu.Lock()
+	h.sessions[sid] = struct{}{}
+	h.mu.Unlock()
+
 	http.SetCookie(w, &http.Cookie{
 		Name:  "SID",
-		Value: "vodarrsid",
+		Value: sid,
 		Path:  "/",
 	})
 	w.Write([]byte("Ok."))
+}
+
+func randomSID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // ---- App info ----
@@ -157,15 +219,24 @@ func (h *Handler) handleTorrentsAdd(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Ok."))
 }
 
+// descriptorMaxBytes is the maximum size we'll read from a descriptor response.
+const descriptorMaxBytes = 1 << 20 // 1 MB
+
 func (h *Handler) processURL(rawURL, savePath string) error {
-	// The URL is the Newznab t=get URL which returns a JSON descriptor
-	resp, err := http.Get(rawURL)
+	// 2A: SSRF protection — only allow http/https schemes pointing to ?t=get
+	if err := validateDescriptorURL(rawURL); err != nil {
+		return fmt.Errorf("invalid descriptor url: %w", err)
+	}
+
+	// 3D: Use dedicated client with timeout instead of http.Get
+	resp, err := h.descriptorCli.Get(rawURL)
 	if err != nil {
 		return fmt.Errorf("fetch descriptor: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// 2H: Limit response body size to 1 MB
+	body, err := io.ReadAll(io.LimitReader(resp.Body, descriptorMaxBytes))
 	if err != nil {
 		return fmt.Errorf("read descriptor: %w", err)
 	}
@@ -255,6 +326,22 @@ func (h *Handler) processURL(rawURL, savePath string) error {
 		slog.Info("strm created", "name", desc.Name, "type", desc.Type, "files", len(strmPaths))
 	}()
 
+	return nil
+}
+
+// validateDescriptorURL rejects non-http/https schemes and URLs that are not
+// Newznab t=get descriptor requests, preventing SSRF.
+func validateDescriptorURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("parse url: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("scheme %q not allowed", u.Scheme)
+	}
+	if u.Query().Get("t") != "get" {
+		return fmt.Errorf("url must be a Newznab t=get request")
+	}
 	return nil
 }
 

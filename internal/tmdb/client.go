@@ -1,6 +1,7 @@
 package tmdb
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -27,7 +28,10 @@ type cacheEntry struct {
 	expiresAt time.Time
 }
 
-const cacheTTL = 24 * time.Hour
+const (
+	cacheTTL     = 24 * time.Hour
+	maxCacheSize = 100_000 // 4G: maximum entries before eviction
+)
 
 func NewClient(apiKey string) *Client {
 	return &Client{
@@ -70,9 +74,14 @@ type tvSearchResponse struct {
 	Results []TVSearchResult `json:"results"`
 }
 
+// Stop releases the rate limiter ticker (5B).
+func (c *Client) Stop() {
+	c.limiter.Stop()
+}
+
 // SearchMovie searches for movies by title and optional year.
 // Returns the best match (first result).
-func (c *Client) SearchMovie(title string, year int) (*MovieSearchResult, error) {
+func (c *Client) SearchMovie(ctx context.Context, title string, year int) (*MovieSearchResult, error) {
 	key := fmt.Sprintf("search_movie:%s:%d", title, year)
 	if hit, ok := c.cacheGet(key); ok {
 		if hit == nil {
@@ -82,17 +91,17 @@ func (c *Client) SearchMovie(title string, year int) (*MovieSearchResult, error)
 	}
 
 	params := url.Values{
-		"query":                {title},
-		"include_adult":        {"false"},
-		"language":             {"en-US"},
-		"page":                 {"1"},
+		"query":         {title},
+		"include_adult": {"false"},
+		"language":      {"en-US"},
+		"page":          {"1"},
 	}
 	if year > 0 {
 		params.Set("year", strconv.Itoa(year))
 	}
 
 	var resp movieSearchResponse
-	if err := c.get("/search/movie", params, &resp); err != nil {
+	if err := c.get(ctx, "/search/movie", params, &resp); err != nil {
 		return nil, fmt.Errorf("search movie %q: %w", title, err)
 	}
 
@@ -106,7 +115,7 @@ func (c *Client) SearchMovie(title string, year int) (*MovieSearchResult, error)
 }
 
 // SearchTV searches for TV shows by title and optional year.
-func (c *Client) SearchTV(title string, year int) (*TVSearchResult, error) {
+func (c *Client) SearchTV(ctx context.Context, title string, year int) (*TVSearchResult, error) {
 	key := fmt.Sprintf("search_tv:%s:%d", title, year)
 	if hit, ok := c.cacheGet(key); ok {
 		if hit == nil {
@@ -126,7 +135,7 @@ func (c *Client) SearchTV(title string, year int) (*TVSearchResult, error) {
 	}
 
 	var resp tvSearchResponse
-	if err := c.get("/search/tv", params, &resp); err != nil {
+	if err := c.get(ctx, "/search/tv", params, &resp); err != nil {
 		return nil, fmt.Errorf("search tv %q: %w", title, err)
 	}
 
@@ -140,7 +149,7 @@ func (c *Client) SearchTV(title string, year int) (*TVSearchResult, error) {
 }
 
 // GetMovieExternalIDs fetches IMDB and other external IDs for a movie.
-func (c *Client) GetMovieExternalIDs(tmdbID int) (*ExternalIDs, error) {
+func (c *Client) GetMovieExternalIDs(ctx context.Context, tmdbID int) (*ExternalIDs, error) {
 	key := fmt.Sprintf("movie_ext:%d", tmdbID)
 	if hit, ok := c.cacheGet(key); ok {
 		if hit == nil {
@@ -150,7 +159,7 @@ func (c *Client) GetMovieExternalIDs(tmdbID int) (*ExternalIDs, error) {
 	}
 
 	var ids ExternalIDs
-	if err := c.get(fmt.Sprintf("/movie/%d/external_ids", tmdbID), nil, &ids); err != nil {
+	if err := c.get(ctx, fmt.Sprintf("/movie/%d/external_ids", tmdbID), nil, &ids); err != nil {
 		return nil, fmt.Errorf("movie external ids %d: %w", tmdbID, err)
 	}
 	ids.TMDBId = tmdbID
@@ -159,7 +168,7 @@ func (c *Client) GetMovieExternalIDs(tmdbID int) (*ExternalIDs, error) {
 }
 
 // GetTVExternalIDs fetches IMDB and TVDB IDs for a TV show.
-func (c *Client) GetTVExternalIDs(tmdbID int) (*ExternalIDs, error) {
+func (c *Client) GetTVExternalIDs(ctx context.Context, tmdbID int) (*ExternalIDs, error) {
 	key := fmt.Sprintf("tv_ext:%d", tmdbID)
 	if hit, ok := c.cacheGet(key); ok {
 		if hit == nil {
@@ -169,7 +178,7 @@ func (c *Client) GetTVExternalIDs(tmdbID int) (*ExternalIDs, error) {
 	}
 
 	var ids ExternalIDs
-	if err := c.get(fmt.Sprintf("/tv/%d/external_ids", tmdbID), nil, &ids); err != nil {
+	if err := c.get(ctx, fmt.Sprintf("/tv/%d/external_ids", tmdbID), nil, &ids); err != nil {
 		return nil, fmt.Errorf("tv external ids %d: %w", tmdbID, err)
 	}
 	ids.TMDBId = tmdbID
@@ -177,9 +186,13 @@ func (c *Client) GetTVExternalIDs(tmdbID int) (*ExternalIDs, error) {
 	return &ids, nil
 }
 
-func (c *Client) get(path string, params url.Values, out interface{}) error {
+func (c *Client) get(ctx context.Context, path string, params url.Values, out interface{}) error {
 	// Rate limit
-	<-c.limiter.C
+	select {
+	case <-c.limiter.C:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
 	u := baseURL + path
 	q := url.Values{"api_key": {c.apiKey}}
@@ -189,7 +202,11 @@ func (c *Client) get(path string, params url.Values, out interface{}) error {
 		}
 	}
 
-	resp, err := c.http.Get(u + "?" + q.Encode())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u+"?"+q.Encode(), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("http get %s: %w", path, err)
 	}
@@ -222,5 +239,9 @@ func (c *Client) cacheGet(key string) (interface{}, bool) {
 func (c *Client) cachePut(key string, val interface{}) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// 4G: Bound cache size — clear when over limit
+	if len(c.cache) >= maxCacheSize {
+		c.cache = make(map[string]cacheEntry)
+	}
 	c.cache[key] = cacheEntry{data: val, expiresAt: time.Now().Add(cacheTTL)}
 }
