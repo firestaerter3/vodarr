@@ -1,6 +1,6 @@
 services:
   vodarr:
-    image: ghcr.io/rolandb5/vodarr:latest
+    image: ghcr.io/firestaerter3/vodarr:latest
     # To build locally instead: comment out `image:` above and uncomment below
     # build: .
     container_name: vodarr
