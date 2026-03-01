@@ -20,7 +20,8 @@ RUN go mod download
 COPY . .
 COPY --from=frontend /internal/web/dist ./internal/web/dist
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o vodarr ./cmd/vodarr
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.version=${VERSION}" -o vodarr ./cmd/vodarr
 
 # ---- Runtime stage ----
 FROM alpine:3.20

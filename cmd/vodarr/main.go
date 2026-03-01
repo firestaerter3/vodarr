@@ -22,6 +22,8 @@ import (
 	"github.com/vodarr/vodarr/internal/xtream"
 )
 
+var version = "dev"
+
 func main() {
 	configPath := flag.String("config", "config.yml", "path to config file")
 	flag.Parse()
@@ -45,6 +47,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	slog.Info("vodarr starting",
+		"version", version,
 		"newznab_port", cfg.Server.NewznabPort,
 		"qbit_port", cfg.Server.QbitPort,
 		"web_port", cfg.Server.WebPort,
