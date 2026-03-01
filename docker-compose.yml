@@ -6,16 +6,16 @@ services:
     container_name: vodarr
     restart: unless-stopped
     ports:
-      - "7878:7878"   # Newznab indexer API (add to Sonarr/Radarr/Prowlarr as indexer)
-      - "8080:8080"   # Fake qBittorrent API (add to Sonarr/Radarr as download client)
-      - "3000:3000"   # Web UI
+      - "9091:9091"   # Newznab indexer API (add to Sonarr/Radarr/Prowlarr as indexer)
+      - "9092:9092"   # Fake qBittorrent API (add to Sonarr/Radarr as download client)
+      - "9090:9090"   # Web UI
     volumes:
       - ./config:/config                     # Mount your config.yml here
       - /mnt/debrid/vodarr-strm:/data/strm  # Where .strm files will be written
     environment:
       - TZ=UTC
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3

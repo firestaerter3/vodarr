@@ -5,8 +5,8 @@ Bridges an Xtream Codes IPTV provider with Sonarr and Radarr. Search your IPTV c
 ## How it works
 
 1. **Sync** — VODarr fetches your full IPTV catalog from the Xtream provider, enriches each title with IMDB/TVDB IDs via TMDB, and holds everything in memory.
-2. **Search** — Sonarr/Radarr query VODarr like any Newznab indexer (port 7878). Searches match by IMDB ID, TVDB ID, or fuzzy title.
-3. **Grab** — Sonarr/Radarr send a "download" request to VODarr's fake qBittorrent client (port 8080). VODarr writes a tiny `.strm` file pointing to the stream URL and immediately reports the torrent as complete.
+2. **Search** — Sonarr/Radarr query VODarr like any Newznab indexer (port 9091). Searches match by IMDB ID, TVDB ID, or fuzzy title.
+3. **Grab** — Sonarr/Radarr send a "download" request to VODarr's fake qBittorrent client (port 9092). VODarr writes a tiny `.strm` file pointing to the stream URL and immediately reports the torrent as complete.
 4. **Play** — Jellyfin imports the `.strm` file and streams directly from the IPTV provider on playback.
 
 ## Quick start
@@ -17,7 +17,7 @@ cp config.example.yml config.yml
 docker compose up -d
 ```
 
-Open `http://<host>:3000` for the web UI.
+Open `http://<host>:9090` for the web UI.
 
 ## Sonarr / Radarr setup
 
@@ -25,7 +25,7 @@ Open `http://<host>:3000` for the web UI.
 
 | Setting | Value |
 |---------|-------|
-| URL | `http://<vodarr-host>:7878` |
+| URL | `http://<vodarr-host>:9091` |
 | Movie categories | `2000` |
 | TV categories | `5000` |
 

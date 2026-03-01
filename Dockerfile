@@ -35,10 +35,10 @@ COPY config.example.yml /app/config.example.yml
 # Default config location (override with -config flag or mount config.yml)
 VOLUME ["/config", "/data"]
 
-EXPOSE 7878 8080 3000
+EXPOSE 9090 9091 9092
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://localhost:3000/api/health || exit 1
+  CMD wget -qO- http://localhost:9090/api/health || exit 1
 
 ENTRYPOINT ["/app/vodarr"]
 CMD ["-config", "/config/config.yml"]

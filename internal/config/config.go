@@ -123,9 +123,9 @@ func defaults() *Config {
 			Parallelism: 10,
 		},
 		Server: ServerConfig{
-			NewznabPort: 7878,
-			QbitPort:    8080,
-			WebPort:     3000,
+			NewznabPort: 9091,
+			QbitPort:    9092,
+			WebPort:     9090,
 		},
 		Logging: LoggingConfig{
 			Level: "info",

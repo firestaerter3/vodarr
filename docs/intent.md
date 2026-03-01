@@ -69,7 +69,7 @@ tiny `.strm` text files.
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐      │
 │  │ Newznab  │  │ qBit API │  │ STRM     │  │ Web UI   │      │
 │  │ API      │  │ (fake)   │  │ Writer   │  │ (React)  │      │
-│  │ :7878    │  │ :8080    │  │          │  │ :3000    │      │
+│  │ :9091    │  │ :9092    │  │          │  │ :9090    │      │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘      │
 └─────────────────────────────────────────────────────────────────┘
        ▲                ▲                           ▲
@@ -145,7 +145,7 @@ GET /api?t=tvsearch&tvdbid=81189
 ### Grab (Sonarr/Radarr → VODarr qBit)
 
 ```
-POST /api/v2/torrents/add  (urls=http://vodarr:7878/api?t=get&id=42&type=movie)
+POST /api/v2/torrents/add  (urls=http://vodarr:9091/api?t=get&id=42&type=movie)
   → fetch JSON descriptor from Newznab t=get
   → store Torrent{hash, name, state:uploading} in memory
   → goroutine: xtream.StreamURL(42, "mkv") → strm.WriteMovie(...)
@@ -165,7 +165,7 @@ GET /api/v2/torrents/info
 | Setting | Value |
 |---------|-------|
 | Type | Newznab |
-| URL | `http://<vodarr-host>:7878` |
+| URL | `http://<vodarr-host>:9091` |
 | API Key | (configured in vodarr, or leave blank) |
 | Movie categories | `2000` |
 | TV categories | `5000` |
@@ -273,8 +273,8 @@ Newznab HTTP handler, qBit state store.
 ### Manual smoke test
 1. Copy `config.example.yml` to `config.yml`, fill in real credentials
 2. `go run ./cmd/vodarr -config config.yml`
-3. Open `http://localhost:3000` — dashboard should show sync progress
-4. In Radarr: Settings → Indexers → Add → Newznab, URL `http://localhost:7878`
+3. Open `http://localhost:9090` — dashboard should show sync progress
+4. In Radarr: Settings → Indexers → Add → Newznab, URL `http://localhost:9091`
 5. Search for a movie → results should appear
 6. Grab a movie → `.strm` file should appear under `output.path`
 

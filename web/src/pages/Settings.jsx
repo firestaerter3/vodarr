@@ -5,7 +5,7 @@ const DEFAULT = {
   tmdb: { api_key: '' },
   output: { path: '/data/strm', movies_dir: 'movies', series_dir: 'tv' },
   sync: { interval: '6h', on_startup: true, parallelism: 10, title_cleanup_patterns: [] },
-  server: { newznab_port: 7878, qbit_port: 8080, web_port: 3000 },
+  server: { newznab_port: 9091, qbit_port: 9092, web_port: 9090 },
   logging: { level: 'info' },
 }
 
@@ -342,21 +342,21 @@ export default function Settings() {
               <Field label="Newznab Port" hint="Indexer API">
                 <TextInput
                   value={String(cfg.server.newznab_port)}
-                  onChange={v => set('server.newznab_port', parseInt(v) || 7878)}
+                  onChange={v => set('server.newznab_port', parseInt(v) || 9091)}
                   monospace
                 />
               </Field>
               <Field label="qBit Port" hint="Download client">
                 <TextInput
                   value={String(cfg.server.qbit_port)}
-                  onChange={v => set('server.qbit_port', parseInt(v) || 8080)}
+                  onChange={v => set('server.qbit_port', parseInt(v) || 9092)}
                   monospace
                 />
               </Field>
               <Field label="Web Port" hint="This UI">
                 <TextInput
                   value={String(cfg.server.web_port)}
-                  onChange={v => set('server.web_port', parseInt(v) || 3000)}
+                  onChange={v => set('server.web_port', parseInt(v) || 9090)}
                   monospace
                 />
               </Field>

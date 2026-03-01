@@ -187,7 +187,7 @@ export default function Dashboard() {
             steps={[
               'Settings → Indexers → Add',
               'Choose: Newznab (Custom)',
-              'URL: http://<host>:7878',
+              'URL: http://<host>:9091',
               'Categories: 2000 (Movies), 5000 (TV)',
             ]}
           />
@@ -196,7 +196,7 @@ export default function Dashboard() {
             steps={[
               'Settings → Download Clients → Add',
               'Choose: qBittorrent',
-              'Host: <host>  Port: 8080',
+              'Host: <host>  Port: 9092',
               'No credentials required',
             ]}
           />

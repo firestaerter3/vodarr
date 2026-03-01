@@ -20,9 +20,9 @@ sync:
   #   - '\s*\[DUBBED\]'
 
 server:
-  newznab_port: 7878       # Newznab indexer API port
-  qbit_port: 8080          # Fake qBittorrent API port
-  web_port: 3000           # Web UI port
+  newznab_port: 9091       # Newznab indexer API port
+  qbit_port: 9092          # Fake qBittorrent API port
+  web_port: 9090           # Web UI port
 
 logging:
   level: "info"
