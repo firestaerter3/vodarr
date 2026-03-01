@@ -14,18 +14,22 @@ import (
 
 // Client is an Xtream Codes API client.
 type Client struct {
-	baseURL  string
-	username string
-	password string
-	http     *http.Client
+	baseURL        string
+	username       string
+	password       string
+	http           *http.Client
+	requestDelay   time.Duration // inter-request pacing (applied once per apiGet call)
+	retryBaseDelay time.Duration // base delay for exponential backoff
 }
 
 func NewClient(baseURL, username, password string) *Client {
 	return &Client{
-		baseURL:  strings.TrimRight(baseURL, "/"),
-		username: username,
-		password: password,
-		http:     &http.Client{Timeout: 30 * time.Second},
+		baseURL:        strings.TrimRight(baseURL, "/"),
+		username:       username,
+		password:       password,
+		http:           &http.Client{Timeout: 30 * time.Second},
+		requestDelay:   50 * time.Millisecond,
+		retryBaseDelay: 1 * time.Second,
 	}
 }
 
@@ -275,25 +279,63 @@ func (c *Client) apiGet(ctx context.Context, action string, params url.Values, o
 		}
 	}
 
-	// 4I: Use context-aware request
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u+"?"+q.Encode(), nil)
-	if err != nil {
-		return err
+	// Inter-request pacing: applied once before the first attempt.
+	if c.requestDelay > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(c.requestDelay):
+		}
 	}
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		// 2G: Sanitize error to avoid leaking credentials from URL
-		return fmt.Errorf("http get %s: %w", sanitizeURL(u), err)
-	}
-	defer resp.Body.Close()
+	var lastErr error
+	for attempt := 0; attempt <= 3; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status %d for %s", resp.StatusCode, sanitizeURL(u))
+		// Exponential backoff before retry attempts (not before the first attempt).
+		if attempt > 0 {
+			delay := c.retryBaseDelay * (1 << (attempt - 1))
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u+"?"+q.Encode(), nil)
+		if err != nil {
+			return err // Don't retry on request build errors.
+		}
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			// 2G: Sanitize error to avoid leaking credentials from URL
+			lastErr = fmt.Errorf("http get %s: %w", sanitizeURL(u), err)
+			continue // Retry on network errors.
+		}
+
+		// Retry on 429 and server errors.
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("unexpected status %d for %s", resp.StatusCode, sanitizeURL(u))
+			continue
+		}
+
+		// Non-retryable HTTP error.
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return fmt.Errorf("unexpected status %d for %s", resp.StatusCode, sanitizeURL(u))
+		}
+
+		// Success: decode and return.
+		defer resp.Body.Close()
+		// 2H: Limit catalog response body size
+		return json.NewDecoder(io.LimitReader(resp.Body, xtreamCatalogMaxBytes)).Decode(out)
 	}
 
-	// 2H: Limit catalog response body size
-	return json.NewDecoder(io.LimitReader(resp.Body, xtreamCatalogMaxBytes)).Decode(out)
+	return fmt.Errorf("after 3 retries: %w", lastErr)
 }
 
 // sanitizeURL strips username and password query params from a URL string

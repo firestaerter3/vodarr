@@ -35,8 +35,9 @@ type OutputConfig struct {
 }
 
 type SyncConfig struct {
-	Interval  string `yaml:"interval"`
-	OnStartup bool   `yaml:"on_startup"`
+	Interval    string `yaml:"interval"`
+	OnStartup   bool   `yaml:"on_startup"`
+	Parallelism int    `yaml:"parallelism"`
 
 	// Parsed interval (not from YAML directly)
 	ParsedInterval time.Duration `yaml:"-"`
@@ -116,8 +117,9 @@ func defaults() *Config {
 			SeriesDir: "tv",
 		},
 		Sync: SyncConfig{
-			Interval:  "6h",
-			OnStartup: true,
+			Interval:    "6h",
+			OnStartup:   true,
+			Parallelism: 10,
 		},
 		Server: ServerConfig{
 			NewznabPort: 7878,
@@ -155,6 +157,13 @@ func (c *Config) validate() error {
 		return fmt.Errorf("sync.interval must be positive")
 	}
 	c.Sync.ParsedInterval = d
+
+	if c.Sync.Parallelism < 1 {
+		c.Sync.Parallelism = 1
+	}
+	if c.Sync.Parallelism > 20 {
+		c.Sync.Parallelism = 20
+	}
 
 	return nil
 }
