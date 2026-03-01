@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -268,7 +269,7 @@ func (h *Handler) processURL(rawURL, savePath string) error {
 		Hash:         hash,
 		Name:         desc.Name,
 		SavePath:     savePath,
-		State:        StateUploading,
+		State:        StateDownloading,
 		Progress:     0,
 		Size:         1024 * 1024 * 1024,
 		XtreamID:     desc.XtreamID,
@@ -393,10 +394,6 @@ func (h *Handler) handleTorrentsInfo(w http.ResponseWriter, r *http.Request) {
 		if filterHash != "" && filterHash != "all" && !strings.Contains(filterHash, t.Hash) {
 			continue
 		}
-		contentPath := t.SavePath
-		if len(t.StrmPaths) > 0 {
-			contentPath = t.StrmPaths[0]
-		}
 		out = append(out, qbTorrent{
 			Hash:         t.Hash,
 			Name:         t.Name,
@@ -405,12 +402,12 @@ func (h *Handler) handleTorrentsInfo(w http.ResponseWriter, r *http.Request) {
 			Progress:     t.Progress,
 			State:        t.State,
 			SavePath:     t.SavePath,
-			ContentPath:  contentPath,
+			ContentPath:  contentPathForTorrent(t),
 			AddedOn:      t.AddedOn,
 			CompletionOn: t.CompletionOn,
 			Ratio:        1.0,
 			Eta:          0,
-			AmountLeft:   0,
+			AmountLeft:   int64((1.0 - t.Progress) * float64(t.Size)),
 		})
 	}
 
@@ -486,9 +483,13 @@ func (h *Handler) handleTorrentsFiles(w http.ResponseWriter, r *http.Request) {
 
 	var files []fileEntry
 	for i, p := range t.StrmPaths {
+		name := p
+		if rel, err := filepath.Rel(t.SavePath, p); err == nil {
+			name = rel
+		}
 		files = append(files, fileEntry{
 			Index:        i,
-			Name:         p,
+			Name:         name,
 			Size:         64,
 			Progress:     1.0,
 			Priority:     1,
@@ -579,4 +580,28 @@ func (h *Handler) writeJSON(w http.ResponseWriter, v interface{}) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Error("json encode error", "error", err)
 	}
+}
+
+// contentPathForTorrent returns the appropriate content_path for Sonarr/Radarr.
+// For movies (single file) it returns the file path directly.
+// For series (multiple files) it returns the common parent directory so that
+// Sonarr can scan and import all episodes, not just the first one.
+func contentPathForTorrent(t *Torrent) string {
+	if len(t.StrmPaths) == 0 {
+		return t.SavePath
+	}
+	if len(t.StrmPaths) == 1 {
+		return t.StrmPaths[0]
+	}
+	// Walk up from the first file's directory until all paths are beneath it.
+	dir := filepath.Dir(t.StrmPaths[0])
+	for _, p := range t.StrmPaths[1:] {
+		for dir != t.SavePath && dir != "/" && dir != "." {
+			if strings.HasPrefix(p, dir+string(filepath.Separator)) {
+				break
+			}
+			dir = filepath.Dir(dir)
+		}
+	}
+	return dir
 }

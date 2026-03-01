@@ -9,8 +9,9 @@ import (
 type TorrentState string
 
 const (
-	StatePausedUP TorrentState = "pausedUP"
-	StateUploading TorrentState = "uploading"
+	StateDownloading TorrentState = "downloading"
+	StatePausedUP    TorrentState = "pausedUP"
+	StateUploading   TorrentState = "uploading"
 )
 
 // Torrent represents a tracked "download" in the fake qBit client.

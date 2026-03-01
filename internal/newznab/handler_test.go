@@ -28,6 +28,9 @@ func makeTestHandler() *Handler {
 			Year:     "2008",
 			TVDBId:   "81189",
 			TMDBId:   "1396",
+			Episodes: []index.EpisodeItem{
+				{EpisodeID: 1, Season: 1, EpisodeNum: 1, Title: "Pilot"},
+			},
 		},
 	})
 	return NewHandler(idx, "", "http://localhost:7878")
@@ -42,12 +45,29 @@ func TestHandleCaps(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", w.Code)
 	}
-	body := w.Body.String()
-	if !strings.Contains(body, "VODarr") {
-		t.Error("caps response missing server title")
+
+	// Parse and verify precise values — string-contains checks miss regressions in
+	// numeric fields like Default/Max and specific supportedParams entries.
+	var caps CapsResponse
+	if err := xml.Unmarshal(w.Body.Bytes(), &caps); err != nil {
+		t.Fatalf("unmarshal caps: %v", err)
 	}
-	if !strings.Contains(body, "movie-search") {
-		t.Error("caps response missing movie-search")
+	if caps.Server.Title != "VODarr" {
+		t.Errorf("server title = %q, want VODarr", caps.Server.Title)
+	}
+	if caps.Limits.Default != 100 {
+		t.Errorf("limits.default = %d, want 100", caps.Limits.Default)
+	}
+	if caps.Limits.Max != 100 {
+		t.Errorf("limits.max = %d, want 100", caps.Limits.Max)
+	}
+	// Radarr reads supportedParams before deciding which query params to send.
+	// Missing "year" means it will never filter by year, reducing precision.
+	if !strings.Contains(caps.Searching.Movie.SupportedParams, "year") {
+		t.Errorf("movie-search supportedParams %q missing 'year'", caps.Searching.Movie.SupportedParams)
+	}
+	if !strings.Contains(caps.Searching.Search.SupportedParams, "year") {
+		t.Errorf("search supportedParams %q missing 'year'", caps.Searching.Search.SupportedParams)
 	}
 }
 
@@ -128,6 +148,113 @@ func TestHandleGet(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "xtream_id") {
 		t.Error("t=get response missing xtream_id")
+	}
+}
+
+func TestCategoryRangeMatch(t *testing.T) {
+	cases := []struct {
+		cat      string
+		low, hi  int
+		want     bool
+	}{
+		// Movies range 2000-2999
+		{"2000", 2000, 2999, true},
+		{"2040", 2000, 2999, true},
+		{"2045", 2000, 2999, true},  // UHD Movies — must NOT trigger TV
+		{"5000", 2000, 2999, false}, // TV category
+		// TV range 5000-5999
+		{"5000", 5000, 5999, true},
+		{"5040", 5000, 5999, true},
+		{"2045", 5000, 5999, false}, // UHD Movies — must NOT trigger TV
+		// Comma-separated
+		{"5000,2000", 5000, 5999, true},
+		{"5000,2000", 2000, 2999, true},
+		// Empty / non-numeric
+		{"", 2000, 2999, false},
+		{"abc", 2000, 2999, false},
+	}
+	for _, c := range cases {
+		got := categoryRangeMatch(c.cat, c.low, c.hi)
+		if got != c.want {
+			t.Errorf("categoryRangeMatch(%q, %d, %d) = %v, want %v", c.cat, c.low, c.hi, got, c.want)
+		}
+	}
+}
+
+func TestHandleTextSearchCategoryFilter(t *testing.T) {
+	h := makeTestHandler()
+
+	// cat=2045 (UHD Movies) should return movies, not TV.
+	req := httptest.NewRequest("GET", "/api?t=search&q=matrix&cat=2045", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	var rss RSS
+	xml.Unmarshal(w.Body.Bytes(), &rss)
+
+	// Positive: must return at least one result (the Matrix movie).
+	if len(rss.Channel.Items) == 0 {
+		t.Error("cat=2045 should return at least one movie result")
+	}
+	// Negative: no TV items.
+	for _, item := range rss.Channel.Items {
+		for _, attr := range item.Attrs {
+			if attr.Name == "category" && attr.Value == "5000" {
+				t.Errorf("cat=2045 should not return TV item, got: %q", item.Title)
+			}
+		}
+	}
+}
+
+func TestHandleMovieSearchTypeFilter(t *testing.T) {
+	// Both a movie and a series share the same IMDB ID (unlikely but possible).
+	// Movie search (t=movie) must return only the movie.
+	idx := index.New()
+	idx.Replace([]*index.Item{
+		{Type: index.TypeMovie, XtreamID: 1, Name: "Shared IMDB Movie", IMDBId: "tt9999999"},
+		{Type: index.TypeSeries, XtreamID: 2, Name: "Shared IMDB Series", IMDBId: "tt9999999",
+			Episodes: []index.EpisodeItem{{EpisodeID: 1, Season: 1, EpisodeNum: 1}}},
+	})
+	h := NewHandler(idx, "", "http://localhost:7878")
+
+	req := httptest.NewRequest("GET", "/api?t=movie&imdbid=tt9999999", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	var rss RSS
+	xml.Unmarshal(w.Body.Bytes(), &rss)
+
+	// Positive: exactly one result (the movie).
+	if len(rss.Channel.Items) != 1 {
+		t.Errorf("expected 1 movie result, got %d", len(rss.Channel.Items))
+	}
+	if len(rss.Channel.Items) > 0 && !strings.Contains(rss.Channel.Items[0].Title, "Shared.IMDB.Movie") {
+		t.Errorf("wrong item returned: %q", rss.Channel.Items[0].Title)
+	}
+	// Negative: no TV items.
+	for _, item := range rss.Channel.Items {
+		for _, attr := range item.Attrs {
+			if attr.Name == "category" && attr.Value == "5000" {
+				t.Errorf("movie search should not return TV item: %q", item.Title)
+			}
+		}
+	}
+}
+
+func TestHandleGetZeroEpisodes(t *testing.T) {
+	// Series with no episodes should return 404 from t=get
+	idx := index.New()
+	idx.Replace([]*index.Item{
+		{Type: index.TypeSeries, XtreamID: 99, Name: "Empty Series"},
+	})
+	h := NewHandler(idx, "", "http://localhost:7878")
+
+	req := httptest.NewRequest("GET", "/api?t=get&id=99&type=series", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("t=get for zero-episode series: status = %d, want 404", w.Code)
 	}
 }
 

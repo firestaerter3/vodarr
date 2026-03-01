@@ -134,6 +134,17 @@ func TestBuildRSSEpisodeAttrs(t *testing.T) {
 	if !strings.Contains(s1e2Items[0].Link, "episode_id=102") {
 		t.Errorf("link %q should contain episode_id=102", s1e2Items[0].Link)
 	}
+
+	// All episode items must have isPermaLink="false" — prevents clients from
+	// treating the GUID as a URL and requesting it (which would 404).
+	for i, epItem := range allItems {
+		if epItem.GUID.IsPermaLink != "false" {
+			t.Errorf("episode item[%d] GUID.IsPermaLink = %q, want \"false\"", i, epItem.GUID.IsPermaLink)
+		}
+		if epItem.GUID.Value == "" {
+			t.Errorf("episode item[%d] GUID.Value is empty", i)
+		}
+	}
 }
 
 func TestRSSXMLValid(t *testing.T) {
@@ -152,6 +163,82 @@ func TestRSSXMLValid(t *testing.T) {
 	}
 }
 
+func TestGUIDIsPermaLinkFalse(t *testing.T) {
+	items := []*index.Item{
+		{Type: index.TypeMovie, XtreamID: 42, Name: "Test Movie", Year: "2020"},
+	}
+	rssItems := buildMovieRSSItems("http://localhost:7878", items)
+	if len(rssItems) == 0 {
+		t.Fatal("expected at least one item")
+	}
+	guid := rssItems[0].GUID
+	if guid.Value == "" {
+		t.Error("GUID value should not be empty")
+	}
+	if guid.IsPermaLink != "false" {
+		t.Errorf("GUID isPermaLink = %q, want \"false\"", guid.IsPermaLink)
+	}
+
+	// Verify it appears correctly in serialised XML
+	data, err := xml.Marshal(buildRSS("http://localhost:7878", rssItems, 0, 1))
+	if err != nil {
+		t.Fatalf("xml.Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `isPermaLink="false"`) {
+		t.Errorf("marshalled XML missing isPermaLink=\"false\": %s", string(data))
+	}
+}
+
+func TestPubDateStable(t *testing.T) {
+	item := &index.Item{
+		Type:        index.TypeMovie,
+		XtreamID:    1,
+		Name:        "Stable Date Movie",
+		ReleaseDate: "2021-06-15",
+	}
+	rssItems := buildMovieRSSItems("http://localhost:7878", []*index.Item{item})
+	if len(rssItems) == 0 {
+		t.Fatal("expected item")
+	}
+	date1 := rssItems[0].PubDate
+
+	// Build again — date must be identical (not time.Now())
+	rssItems2 := buildMovieRSSItems("http://localhost:7878", []*index.Item{item})
+	date2 := rssItems2[0].PubDate
+
+	if date1 != date2 {
+		t.Errorf("PubDate is not stable: %q vs %q", date1, date2)
+	}
+	if strings.Contains(date1, "1970") {
+		// If release date parses, we should not fall back to epoch
+		t.Errorf("PubDate fell back to epoch for a known release date: %q", date1)
+	}
+}
+
+func TestPubDateFallbackToEpoch(t *testing.T) {
+	item := &index.Item{Type: index.TypeMovie, XtreamID: 1, Name: "No Date Movie"}
+	rssItems := buildMovieRSSItems("http://localhost:7878", []*index.Item{item})
+	if len(rssItems) == 0 {
+		t.Fatal("expected item")
+	}
+	date1 := rssItems[0].PubDate
+	if date1 == "" {
+		t.Error("PubDate should not be empty")
+	}
+
+	// The fallback must be stable across calls — time.Now() would not be stable
+	// and would cause Sonarr to re-grab every RSS sync.
+	rssItems2 := buildMovieRSSItems("http://localhost:7878", []*index.Item{item})
+	if date1 != rssItems2[0].PubDate {
+		t.Errorf("fallback PubDate is not stable: %q vs %q", date1, rssItems2[0].PubDate)
+	}
+
+	// The fallback must not use the current year (it should be epoch: 1970).
+	if !strings.Contains(date1, "1970") {
+		t.Errorf("fallback PubDate should be Unix epoch (1970), got: %q", date1)
+	}
+}
+
 func TestBuildTitle(t *testing.T) {
 	cases := []struct {
 		item *index.Item
@@ -165,11 +252,18 @@ func TestBuildTitle(t *testing.T) {
 			&index.Item{Name: "No Year", Year: "", ContainerExt: "mp4"},
 			"No.Year.WEB-DL.mp4",
 		},
+		// Year field is empty but ReleaseDate has a year — buildTitle must use it.
+		// This covers the sync fix that populates Year from ReleaseDate for series.
+		{
+			&index.Item{Name: "Release Date Only", Year: "", ReleaseDate: "2019-03-22", ContainerExt: "mkv"},
+			"Release.Date.Only.2019.WEB-DL.mkv",
+		},
 	}
 	for _, c := range cases {
 		got := buildTitle(c.item)
 		if got != c.want {
-			t.Errorf("buildTitle(%q) = %q, want %q", c.item.Name, got, c.want)
+			t.Errorf("buildTitle(%q year=%q releaseDate=%q) = %q, want %q",
+				c.item.Name, c.item.Year, c.item.ReleaseDate, got, c.want)
 		}
 	}
 }

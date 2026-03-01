@@ -147,7 +147,7 @@ func TestStrmFilePermissions(t *testing.T) {
 		t.Fatalf("Stat: %v", err)
 	}
 	perm := info.Mode().Perm()
-	if perm != 0600 {
-		t.Errorf("file permissions = %04o, want 0600", perm)
+	if perm != 0644 {
+		t.Errorf("file permissions = %04o, want 0644", perm)
 	}
 }

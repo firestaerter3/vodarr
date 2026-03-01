@@ -215,6 +215,9 @@ func (s *Scheduler) fetchAll(ctx context.Context) ([]*index.Item, error) {
 			Poster:      sr.Cover,
 			ReleaseDate: sr.ReleaseDate,
 		}
+		if len(sr.ReleaseDate) >= 4 {
+			item.Year = sr.ReleaseDate[:4]
+		}
 		if sr.TMDBId.Int() > 0 {
 			item.TMDBId = strconv.Itoa(sr.TMDBId.Int())
 		}
@@ -262,7 +265,7 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item) ([]*index.I
 
 		if item.TMDBId == "" {
 			// Try searching by title
-			if err := s.resolveByTitle(item); err != nil {
+			if err := s.resolveByTitle(ctx, item); err != nil {
 				slog.Debug("title resolve failed", "name", item.Name, "error", err)
 			}
 		}
@@ -303,7 +306,9 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item) ([]*index.I
 }
 
 // resolveByTitle searches TMDB by title to find a TMDB ID.
-func (s *Scheduler) resolveByTitle(item *index.Item) error {
+// ctx is passed through so that sync cancellation (e.g. SIGTERM) propagates
+// to TMDB search calls and avoids blocking shutdown on large catalogs.
+func (s *Scheduler) resolveByTitle(ctx context.Context, item *index.Item) error {
 	year := 0
 	if item.Year != "" {
 		if y, err := strconv.Atoi(item.Year); err == nil {
@@ -313,7 +318,7 @@ func (s *Scheduler) resolveByTitle(item *index.Item) error {
 
 	switch item.Type {
 	case index.TypeMovie:
-		result, err := s.tmdb.SearchMovie(context.Background(), item.Name, year)
+		result, err := s.tmdb.SearchMovie(ctx, item.Name, year)
 		if err != nil {
 			return err
 		}
@@ -321,7 +326,7 @@ func (s *Scheduler) resolveByTitle(item *index.Item) error {
 			item.TMDBId = strconv.Itoa(result.ID)
 		}
 	case index.TypeSeries:
-		result, err := s.tmdb.SearchTV(context.Background(), item.Name, year)
+		result, err := s.tmdb.SearchTV(ctx, item.Name, year)
 		if err != nil {
 			return err
 		}

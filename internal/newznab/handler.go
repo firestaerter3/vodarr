@@ -79,11 +79,11 @@ func (h *Handler) handleMovieSearch(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(imdbID, "tt") {
 			imdbID = "tt" + imdbID
 		}
-		results = h.idx.SearchByIMDB(imdbID)
+		results = filterByType(h.idx.SearchByIMDB(imdbID), index.TypeMovie)
 		slog.Debug("movie search by imdb", "imdb", imdbID, "hits", len(results))
 
 	case tmdbID != "":
-		results = h.idx.SearchByTMDB(tmdbID)
+		results = filterByType(h.idx.SearchByTMDB(tmdbID), index.TypeMovie)
 		slog.Debug("movie search by tmdb", "tmdb", tmdbID, "hits", len(results))
 
 	case query != "":
@@ -129,11 +129,11 @@ func (h *Handler) handleTVSearch(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case tvdbID != "":
-		results = h.idx.SearchByTVDB(tvdbID)
+		results = filterByType(h.idx.SearchByTVDB(tvdbID), index.TypeSeries)
 		slog.Debug("tv search by tvdb", "tvdb", tvdbID, "hits", len(results))
 
 	case tmdbID != "":
-		results = h.idx.SearchByTMDB(tmdbID)
+		results = filterByType(h.idx.SearchByTMDB(tmdbID), index.TypeSeries)
 		slog.Debug("tv search by tmdb", "tmdb", tmdbID, "hits", len(results))
 
 	case query != "":
@@ -173,9 +173,11 @@ func (h *Handler) handleTextSearch(w http.ResponseWriter, r *http.Request) {
 	cat := q.Get("cat")
 
 	var mediaType index.MediaType
-	if strings.Contains(cat, "5") {
+	isTV := cat != "" && categoryRangeMatch(cat, 5000, 5999)
+	isMovie := cat != "" && categoryRangeMatch(cat, 2000, 2999)
+	if isTV && !isMovie {
 		mediaType = index.TypeSeries
-	} else if strings.Contains(cat, "2") {
+	} else if isMovie && !isTV {
 		mediaType = index.TypeMovie
 	}
 
@@ -231,12 +233,7 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 
 	episodeID, _ := strconv.Atoi(episodeIDStr)
 
-	// 5E: O(1) lookup by XtreamID instead of O(n) scan
-	found := h.idx.SearchByXtreamID(id)
-	if found != nil && mediaType != "" && string(found.Type) != mediaType {
-		found = nil // type mismatch
-	}
-
+	found := h.idx.SearchByXtreamID(id, mediaType)
 	if found == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -258,6 +255,14 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Don't return a series descriptor with no episodes — the qBit handler
+	// would create zero STRM files and Sonarr would see a completed torrent
+	// with nothing to import.
+	if found.Type == index.TypeSeries && len(episodes) == 0 {
+		http.Error(w, "series has no episodes", http.StatusNotFound)
+		return
+	}
+
 	// Return JSON descriptor — qBit handler will parse this
 	desc := map[string]interface{}{
 		"xtream_id":     found.XtreamID,
@@ -273,6 +278,33 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(desc)
+}
+
+// categoryRangeMatch returns true if any comma-separated category value in cat
+// falls within [low, high] inclusive. This avoids the false positive from
+// strings.Contains (e.g. "2045" containing "5" would incorrectly match TV).
+func categoryRangeMatch(cat string, low, high int) bool {
+	for _, part := range strings.Split(cat, ",") {
+		n, err := strconv.Atoi(strings.TrimSpace(part))
+		if err != nil {
+			continue
+		}
+		if n >= low && n <= high {
+			return true
+		}
+	}
+	return false
+}
+
+// filterByType returns only items of the given media type.
+func filterByType(items []*index.Item, t index.MediaType) []*index.Item {
+	var out []*index.Item
+	for _, item := range items {
+		if item.Type == t {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func (h *Handler) writeRSS(w http.ResponseWriter, items []Item, offset, total int) {

@@ -2,6 +2,7 @@ package index
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
 	"sync"
 )
@@ -46,23 +47,24 @@ type Item struct {
 }
 
 // EpisodeItem is an episode within a series.
+// JSON tags are explicit to match the field names expected by the qBit handler.
 type EpisodeItem struct {
-	EpisodeID  int
-	Season     int
-	EpisodeNum int
-	Title      string
-	Ext        string
+	EpisodeID  int    `json:"EpisodeID"`
+	Season     int    `json:"Season"`
+	EpisodeNum int    `json:"EpisodeNum"`
+	Title      string `json:"Title"`
+	Ext        string `json:"Ext"`
 }
 
 // Index is a thread-safe in-memory content index.
 type Index struct {
 	mu sync.RWMutex
 
-	byIMDB    map[string][]*Item
-	byTVDB    map[string][]*Item
-	byTMDB    map[string][]*Item
-	byXtream  map[int]*Item // 5E: O(1) lookup by Xtream stream/series ID
-	allItems  []*Item
+	byIMDB   map[string][]*Item
+	byTVDB   map[string][]*Item
+	byTMDB   map[string][]*Item
+	byXtream map[string]*Item // composite key "type:id" to avoid movie/series ID collisions
+	allItems []*Item
 }
 
 func New() *Index {
@@ -70,8 +72,13 @@ func New() *Index {
 		byIMDB:   make(map[string][]*Item),
 		byTVDB:   make(map[string][]*Item),
 		byTMDB:   make(map[string][]*Item),
-		byXtream: make(map[int]*Item),
+		byXtream: make(map[string]*Item),
 	}
+}
+
+// xtreamKey builds the composite map key for byXtream lookups.
+func xtreamKey(t MediaType, id int) string {
+	return fmt.Sprintf("%s:%d", t, id)
 }
 
 // Replace atomically swaps the entire index content.
@@ -79,7 +86,7 @@ func (idx *Index) Replace(items []*Item) {
 	byIMDB := make(map[string][]*Item)
 	byTVDB := make(map[string][]*Item)
 	byTMDB := make(map[string][]*Item)
-	byXtream := make(map[int]*Item)
+	byXtream := make(map[string]*Item)
 
 	for _, item := range items {
 		item.normalizedTitle = normalizeTitle(item.Name)
@@ -94,7 +101,7 @@ func (idx *Index) Replace(items []*Item) {
 			byTMDB[item.TMDBId] = append(byTMDB[item.TMDBId], item)
 		}
 		if item.XtreamID > 0 {
-			byXtream[item.XtreamID] = item
+			byXtream[xtreamKey(item.Type, item.XtreamID)] = item
 		}
 	}
 
@@ -107,12 +114,19 @@ func (idx *Index) Replace(items []*Item) {
 	idx.mu.Unlock()
 }
 
-// SearchByXtreamID returns the item for the given Xtream stream/series ID (5E).
-func (idx *Index) SearchByXtreamID(id int) *Item {
+// SearchByXtreamID returns the item for the given Xtream stream/series ID.
+// mediaType should be "movie" or "series"; if empty, both types are tried.
+func (idx *Index) SearchByXtreamID(id int, mediaType string) *Item {
 	idx.mu.RLock()
-	item := idx.byXtream[id]
-	idx.mu.RUnlock()
-	return item
+	defer idx.mu.RUnlock()
+	if mediaType != "" {
+		return idx.byXtream[xtreamKey(MediaType(mediaType), id)]
+	}
+	// No type hint: try movie first, then series.
+	if item := idx.byXtream[xtreamKey(TypeMovie, id)]; item != nil {
+		return item
+	}
+	return idx.byXtream[xtreamKey(TypeSeries, id)]
 }
 
 // SearchByIMDB returns a copy of items matching the given IMDB ID (4E).

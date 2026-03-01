@@ -35,16 +35,23 @@ type Response struct {
 	Total  int `xml:"total,attr"`
 }
 
+// GUID is a Newznab RSS guid element with an isPermaLink attribute.
+// Setting isPermaLink="false" prevents clients from treating the value as a URL.
+type GUID struct {
+	Value       string `xml:",chardata"`
+	IsPermaLink string `xml:"isPermaLink,attr"`
+}
+
 // Item represents a single search result.
 type Item struct {
-	Title       string  `xml:"title"`
-	GUID        string  `xml:"guid"`
-	Link        string  `xml:"link"`
-	PubDate     string  `xml:"pubDate"`
-	Description string  `xml:"description"`
-	Size        int64   `xml:"size"`
+	Title       string    `xml:"title"`
+	GUID        GUID      `xml:"guid"`
+	Link        string    `xml:"link"`
+	PubDate     string    `xml:"pubDate"`
+	Description string    `xml:"description"`
+	Size        int64     `xml:"size"`
 	Enclosure   Enclosure `xml:"enclosure"`
-	Attrs       []Attr  `xml:"newznab:attr"`
+	Attrs       []Attr    `xml:"newznab:attr"`
 }
 
 // Enclosure mimics an NZB file link.
@@ -108,11 +115,11 @@ func buildCaps(serverURL string) *CapsResponse {
 			Title:   "VODarr",
 			Email:   "vodarr@localhost",
 		},
-		Limits: CapsLimits{Max: 100, Default: 50},
+		Limits: CapsLimits{Max: 100, Default: 100},
 		Searching: CapsSearcing{
-			Search:   CapsSearch{Available: "yes", SupportedParams: "q"},
+			Search:   CapsSearch{Available: "yes", SupportedParams: "q,year"},
 			TVSearch: CapsSearch{Available: "yes", SupportedParams: "q,tvdbid,tmdbid,season,ep"},
-			Movie:    CapsSearch{Available: "yes", SupportedParams: "q,imdbid,tmdbid"},
+			Movie:    CapsSearch{Available: "yes", SupportedParams: "q,imdbid,tmdbid,year"},
 		},
 		Categories: CapsCategories{
 			Category: []CapsCategory{
@@ -162,6 +169,11 @@ func buildMovieRSSItems(serverURL string, items []*index.Item) []Item {
 func buildEpisodeRSSItems(serverURL string, items []*index.Item, seasonFilter, epFilter int) []Item {
 	var out []Item
 	for _, item := range items {
+		// Skip series with no indexed episodes — they would produce a phantom
+		// result that the qBit handler cannot turn into any STRM files.
+		if len(item.Episodes) == 0 {
+			continue
+		}
 		for _, ep := range item.Episodes {
 			if seasonFilter > 0 && ep.Season != seasonFilter {
 				continue
@@ -170,10 +182,6 @@ func buildEpisodeRSSItems(serverURL string, items []*index.Item, seasonFilter, e
 				continue
 			}
 			out = append(out, episodeToRSS(serverURL, item, ep))
-		}
-		// If the series has no episodes indexed yet, emit one placeholder per series
-		if len(item.Episodes) == 0 {
-			out = append(out, itemToRSS(serverURL, item))
 		}
 	}
 	return out
@@ -203,9 +211,9 @@ func episodeToRSS(serverURL string, series *index.Item, ep index.EpisodeItem) It
 
 	rssItem := Item{
 		Title:       title,
-		GUID:        guid,
+		GUID:        GUID{Value: guid, IsPermaLink: "false"},
 		Link:        downloadURL,
-		PubDate:     time.Now().UTC().Format(time.RFC1123Z),
+		PubDate:     stableDate(series.ReleaseDate),
 		Description: series.Plot,
 		Size:        size,
 		Enclosure: Enclosure{
@@ -251,9 +259,9 @@ func itemToRSS(serverURL string, item *index.Item) Item {
 
 	rssItem := Item{
 		Title:       title,
-		GUID:        guid,
+		GUID:        GUID{Value: guid, IsPermaLink: "false"},
 		Link:        downloadURL,
-		PubDate:     time.Now().UTC().Format(time.RFC1123Z),
+		PubDate:     stableDate(item.ReleaseDate),
 		Description: item.Plot,
 		Size:        size,
 		Enclosure: Enclosure{
@@ -286,6 +294,20 @@ func itemToRSS(serverURL string, item *index.Item) Item {
 	}
 
 	return rssItem
+}
+
+// stableDate returns a consistent RFC1123Z timestamp from a release date string.
+// Using a stable date (rather than time.Now) prevents Sonarr/Radarr from
+// re-grabbing already-processed items on each RSS sync.
+func stableDate(releaseDate string) string {
+	if releaseDate != "" {
+		for _, layout := range []string{"2006-01-02", "2006"} {
+			if t, err := time.Parse(layout, releaseDate); err == nil {
+				return t.UTC().Format(time.RFC1123Z)
+			}
+		}
+	}
+	return time.Unix(0, 0).UTC().Format(time.RFC1123Z)
 }
 
 func buildTitle(item *index.Item) string {

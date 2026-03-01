@@ -4,6 +4,83 @@ import (
 	"testing"
 )
 
+func TestTorrentStateLifecycle(t *testing.T) {
+	s := NewStore()
+	// processURL creates torrents with StateDownloading; verify the full lifecycle.
+	s.Add(&Torrent{Hash: "h1", Name: "Test Movie", Size: 1024, State: StateDownloading})
+
+	got := s.Get("h1")
+	if got.State != StateDownloading {
+		t.Errorf("initial state = %q, want downloading", got.State)
+	}
+	if got.Progress != 0 {
+		t.Errorf("initial progress = %f, want 0", got.Progress)
+	}
+
+	s.SetComplete("h1", []string{"/data/strm/movies/Test Movie/Test.Movie.strm"})
+	got = s.Get("h1")
+	if got.State != StatePausedUP {
+		t.Errorf("completed state = %q, want pausedUP", got.State)
+	}
+	if got.Progress != 1.0 {
+		t.Errorf("completed progress = %f, want 1.0", got.Progress)
+	}
+}
+
+func TestContentPathForTorrent(t *testing.T) {
+	savePath := "/data/strm"
+
+	t.Run("no strm paths returns save_path", func(t *testing.T) {
+		tor := &Torrent{SavePath: savePath}
+		got := contentPathForTorrent(tor)
+		if got != savePath {
+			t.Errorf("got %q, want %q", got, savePath)
+		}
+	})
+
+	t.Run("single file returns file path", func(t *testing.T) {
+		tor := &Torrent{
+			SavePath:  savePath,
+			StrmPaths: []string{"/data/strm/movies/Inception/Inception.2010.strm"},
+		}
+		got := contentPathForTorrent(tor)
+		if got != "/data/strm/movies/Inception/Inception.2010.strm" {
+			t.Errorf("got %q, want file path", got)
+		}
+	})
+
+	t.Run("multi-file series returns common parent", func(t *testing.T) {
+		tor := &Torrent{
+			SavePath: savePath,
+			StrmPaths: []string{
+				"/data/strm/tv/Breaking Bad/Season 01/Breaking.Bad.S01E01.strm",
+				"/data/strm/tv/Breaking Bad/Season 01/Breaking.Bad.S01E02.strm",
+				"/data/strm/tv/Breaking Bad/Season 02/Breaking.Bad.S02E01.strm",
+			},
+		}
+		got := contentPathForTorrent(tor)
+		if got != "/data/strm/tv/Breaking Bad" {
+			t.Errorf("got %q, want /data/strm/tv/Breaking Bad", got)
+		}
+	})
+
+	t.Run("multi-file single season series", func(t *testing.T) {
+		tor := &Torrent{
+			SavePath: savePath,
+			StrmPaths: []string{
+				"/data/strm/tv/Fargo/Season 01/Fargo.S01E01.strm",
+				"/data/strm/tv/Fargo/Season 01/Fargo.S01E02.strm",
+			},
+		}
+		got := contentPathForTorrent(tor)
+		// Common parent of two files in the same dir is that dir
+		want := "/data/strm/tv/Fargo/Season 01"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}
+
 func TestStore(t *testing.T) {
 	s := NewStore()
 
