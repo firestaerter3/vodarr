@@ -4,7 +4,7 @@ const DEFAULT = {
   xtream: { url: '', username: '', password: '' },
   tmdb: { api_key: '' },
   output: { path: '/data/strm', movies_dir: 'movies', series_dir: 'tv' },
-  sync: { interval: '6h', on_startup: true },
+  sync: { interval: '6h', on_startup: true, parallelism: 10 },
   server: { newznab_port: 7878, qbit_port: 8080, web_port: 3000 },
   logging: { level: 'info' },
 }
@@ -287,9 +287,18 @@ export default function Settings() {
         {/* Sync */}
         <div className="animate-fade-up animate-fade-up-4">
           <Section title="Sync Schedule">
-            <Field label="Interval" hint="Go duration format: 6h, 12h, 24h, 1h30m">
-              <TextInput value={cfg.sync.interval} onChange={v => set('sync.interval', v)} monospace />
-            </Field>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Interval" hint="Go duration format: 6h, 12h, 24h, 1h30m">
+                <TextInput value={cfg.sync.interval} onChange={v => set('sync.interval', v)} monospace />
+              </Field>
+              <Field label="Parallelism" hint="Concurrent workers for series fetch and TMDB enrichment (1–20)">
+                <TextInput
+                  value={String(cfg.sync.parallelism)}
+                  onChange={v => set('sync.parallelism', Math.min(20, Math.max(1, parseInt(v) || 1)))}
+                  monospace
+                />
+              </Field>
+            </div>
             <div className="flex items-center justify-between">
               <Field label="Sync on Startup">
                 <span className="font-mono text-[11px] text-steel-500">
