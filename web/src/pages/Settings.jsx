@@ -121,15 +121,14 @@ export default function Settings() {
     })
   }
 
-  const handleSave = async e => {
-    e.preventDefault()
+  const saveConfig = async (currentCfg) => {
     setSaving(true)
     setSaveError(null)
     try {
       const res = await fetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cfg),
+        body: JSON.stringify(currentCfg),
       })
       const data = await res.json()
       if (data.error) {
@@ -147,6 +146,11 @@ export default function Settings() {
     setSaving(false)
   }
 
+  const handleSave = async e => {
+    e.preventDefault()
+    await saveConfig(cfg)
+  }
+
   const testXtream = async () => {
     setXtreamTest({ loading: true, success: false, error: null })
     try {
@@ -159,6 +163,7 @@ export default function Settings() {
       if (data.success) {
         setXtreamTest({ loading: false, success: true, error: null })
         setTimeout(() => setXtreamTest(s => ({ ...s, success: false })), 5000)
+        await saveConfig(cfg)
       } else {
         setXtreamTest({ loading: false, success: false, error: data.error || 'Connection failed' })
         setTimeout(() => setXtreamTest(s => ({ ...s, error: null })), 5000)
@@ -181,6 +186,7 @@ export default function Settings() {
       if (data.success) {
         setTmdbTest({ loading: false, success: true, error: null })
         setTimeout(() => setTmdbTest(s => ({ ...s, success: false })), 5000)
+        await saveConfig(cfg)
       } else {
         setTmdbTest({ loading: false, success: false, error: data.error || 'Connection failed' })
         setTimeout(() => setTmdbTest(s => ({ ...s, error: null })), 5000)

@@ -329,7 +329,8 @@ func (h *Handler) handleTestXtream(w http.ResponseWriter, r *http.Request) {
 
 	password := resolveSentinel(req.Password, storedPassword)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	// Use Background context so Brave/HTTP2 connection cancellation doesn't abort the outbound request
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	xc := xtream.NewClient(req.URL, req.Username, password)
@@ -363,7 +364,8 @@ func (h *Handler) handleTestTMDB(w http.ResponseWriter, r *http.Request) {
 
 	apiKey := resolveSentinel(req.APIKey, storedKey)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	// Use Background context so Brave/HTTP2 connection cancellation doesn't abort the outbound request
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	tc := tmdb.NewClient(apiKey)
