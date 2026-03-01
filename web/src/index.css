@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --void-900: #07080f;
+  --void-800: #0d0f1a;
+  --void-700: #131625;
+  --void-600: #1a1f35;
+  --void-500: #222844;
+  --lime-400: #a3ff47;
+  --lime-500: #84e030;
+  --steel-300: #c8d0e8;
+  --steel-400: #9aa3c0;
+  --steel-500: #6b7494;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background-color: var(--void-900);
+  color: var(--steel-300);
+  font-family: 'Syne', sans-serif;
+  /* Dot grid texture */
+  background-image: radial-gradient(circle, #1a1f35 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: var(--void-800); }
+::-webkit-scrollbar-thumb { background: var(--void-500); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--steel-500); }
+
+/* Animations */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--lime-400); }
+  50% { opacity: 0.4; box-shadow: 0 0 2px var(--lime-400); }
+}
+
+@keyframes scan-line {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes counter-tick {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.4s ease-out forwards;
+}
+
+.animate-fade-up-1 { animation-delay: 0.05s; opacity: 0; }
+.animate-fade-up-2 { animation-delay: 0.1s; opacity: 0; }
+.animate-fade-up-3 { animation-delay: 0.15s; opacity: 0; }
+.animate-fade-up-4 { animation-delay: 0.2s; opacity: 0; }
+
+.pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* Card glow on hover */
+.card-hover {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.card-hover:hover {
+  border-color: var(--void-500);
+  box-shadow: 0 0 24px rgba(163, 255, 71, 0.04);
+}
+
+/* Lime glow */
+.lime-glow {
+  box-shadow: 0 0 12px rgba(163, 255, 71, 0.25), 0 0 40px rgba(163, 255, 71, 0.08);
+}
+
+/* Status badge */
+.badge-ok {
+  background: rgba(163, 255, 71, 0.1);
+  color: var(--lime-400);
+  border: 1px solid rgba(163, 255, 71, 0.25);
+}
+.badge-idle {
+  background: rgba(155, 163, 192, 0.1);
+  color: var(--steel-400);
+  border: 1px solid rgba(155, 163, 192, 0.2);
+}
+.badge-error {
+  background: rgba(255, 80, 80, 0.1);
+  color: #ff6060;
+  border: 1px solid rgba(255, 80, 80, 0.25);
+}
+.badge-running {
+  background: rgba(80, 160, 255, 0.1);
+  color: #60a8ff;
+  border: 1px solid rgba(80, 160, 255, 0.25);
+}
+
+/* Progress bar */
+.progress-bar {
+  background: linear-gradient(90deg, var(--lime-400) 0%, var(--lime-500) 100%);
+  box-shadow: 0 0 8px rgba(163, 255, 71, 0.4);
+}
+
+/* Table rows */
+.table-row {
+  transition: background 0.15s ease;
+}
+.table-row:hover {
+  background: rgba(163, 255, 71, 0.03);
+}
+
+/* Input focus */
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: rgba(163, 255, 71, 0.4) !important;
+  box-shadow: 0 0 0 1px rgba(163, 255, 71, 0.15);
+}

@@ -1,0 +1,44 @@
+# ---- Frontend build stage ----
+FROM node:22-alpine AS frontend
+
+WORKDIR /web
+COPY web/package*.json ./
+RUN npm ci --prefer-offline
+COPY web/ ./
+RUN npm run build
+
+# ---- Go build stage ----
+FROM golang:1.23-alpine AS builder
+
+WORKDIR /build
+
+# Cache dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source and pre-built frontend
+COPY . .
+COPY --from=frontend /internal/web/dist ./internal/web/dist
+
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o vodarr ./cmd/vodarr
+
+# ---- Runtime stage ----
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates tzdata
+
+WORKDIR /app
+
+COPY --from=builder /build/vodarr /app/vodarr
+COPY config.example.yml /app/config.example.yml
+
+# Default config location (override with -config flag or mount config.yml)
+VOLUME ["/config", "/data"]
+
+EXPOSE 7878 8080 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://localhost:3000/api/health || exit 1
+
+ENTRYPOINT ["/app/vodarr"]
+CMD ["-config", "/config/config.yml"]

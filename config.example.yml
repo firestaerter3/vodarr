@@ -1,0 +1,24 @@
+xtream:
+  url: "http://provider.example.com"
+  username: "user"
+  password: "pass"
+
+tmdb:
+  api_key: "your-tmdb-api-key"
+
+output:
+  path: "/data/strm"       # Where .strm files are written
+  movies_dir: "movies"     # Subfolder for movies
+  series_dir: "tv"         # Subfolder for TV series
+
+sync:
+  interval: "6h"           # How often to refresh Xtream catalog
+  on_startup: true         # Sync immediately on start
+
+server:
+  newznab_port: 7878       # Newznab indexer API port
+  qbit_port: 8080          # Fake qBittorrent API port
+  web_port: 3000           # Web UI port
+
+logging:
+  level: "info"

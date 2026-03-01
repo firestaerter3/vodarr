@@ -1,0 +1,14 @@
+# Go build artifacts
+/vodarr
+/cmd/vodarr/vodarr
+
+# Config with credentials (never commit)
+config.yml
+config/
+
+# Frontend build output (goes to internal/web/dist/ at build time)
+web/node_modules/
+internal/web/dist/
+
+# OS
+.DS_Store
