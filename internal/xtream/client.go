@@ -121,8 +121,8 @@ type Series struct {
 
 // SeriesInfo holds seasons and episodes for a series.
 type SeriesInfo struct {
-	Info    SeriesInfoDetail       `json:"info"`
-	Seasons map[string]SeasonInfo  `json:"seasons"`
+	Info     SeriesInfoDetail      `json:"info"`
+	Seasons  json.RawMessage       `json:"seasons"`  // provider may return [] or {} — field unused
 	Episodes map[string][]Episode  `json:"episodes"`
 }
 
