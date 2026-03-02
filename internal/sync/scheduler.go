@@ -590,10 +590,11 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 					}
 				}
 
-				// TVDB fallback: series that got a TMDB ID but no TVDB ID
-				// (TMDB's external_ids had no TVDB link) are searched
-				// directly on TVDB by title.
-				if item.Type == index.TypeSeries && item.TMDBId != "" && item.TVDBId == "" && s.tvdb != nil {
+				// TVDB fallback: any series without a TVDB ID is searched
+				// directly on TVDB by title — covers both the case where
+				// TMDB had no TVDB cross-link and the case where TMDB
+				// found nothing at all (e.g. Dutch-only shows).
+				if item.Type == index.TypeSeries && item.TVDBId == "" && s.tvdb != nil {
 					if err := s.resolveByTVDB(ctx, item); err != nil {
 						slog.Warn("TVDB fallback failed", "name", item.Name, "error", err)
 					}
