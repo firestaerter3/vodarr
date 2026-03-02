@@ -64,13 +64,15 @@ func (s *Store) Get(hash string) *Torrent {
 	return s.torrents[hash]
 }
 
-// All returns all tracked torrents.
+// All returns snapshots of all tracked torrents.
+// Each element is a copy so callers may read fields without holding the lock.
 func (s *Store) All() []*Torrent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]*Torrent, 0, len(s.torrents))
 	for _, t := range s.torrents {
-		out = append(out, t)
+		cp := *t
+		out = append(out, &cp)
 	}
 	return out
 }
