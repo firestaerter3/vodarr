@@ -3,12 +3,22 @@ package newznab
 import (
 	"encoding/xml"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/vodarr/vodarr/internal/index"
 )
+
+// iptvPrefixRe matches IPTV provider prefixes like "┃NL┃", "| NL | HD |", etc.
+// Replicates the pattern used in sync/scheduler.go for title cleaning.
+var iptvPrefixRe = regexp.MustCompile(`^[\s]*[|┃]\s*(?:[^|┃]+[|┃]\s*)+`)
+
+// stripIPTVPrefix removes leading IPTV category prefixes from a name.
+func stripIPTVPrefix(s string) string {
+	return strings.TrimSpace(iptvPrefixRe.ReplaceAllString(s, ""))
+}
 
 // RSS is the root RSS 2.0 document.
 type RSS struct {
@@ -200,19 +210,15 @@ func episodeToRSS(serverURL string, series *index.Item, ep index.EpisodeItem) It
 	downloadURL := fmt.Sprintf("%s/api?t=get&id=%d&type=series&episode_id=%d",
 		serverURL, series.XtreamID, ep.EpisodeID)
 
-	seriesSafe := strings.ReplaceAll(series.Name, " ", ".")
+	seriesSafe := strings.ReplaceAll(stripIPTVPrefix(series.Name), " ", ".")
 	seriesSafe = strings.ReplaceAll(seriesSafe, ":", "")
 	seriesSafe = strings.ReplaceAll(seriesSafe, "/", "")
 
-	epTitle := ep.Title
-	if epTitle != "" {
-		epTitle = "." + strings.ReplaceAll(epTitle, " ", ".")
-	}
 	ext := ep.Ext
 	if ext == "" {
 		ext = "mkv"
 	}
-	title := fmt.Sprintf("%s.%s%s.WEB-DL.%s", seriesSafe, epTag, epTitle, ext)
+	title := fmt.Sprintf("%s.%s.WEB-DL.%s", seriesSafe, epTag, ext)
 
 	rssItem := Item{
 		Title:       title,
@@ -320,7 +326,7 @@ func buildTitle(item *index.Item) string {
 	if ext == "" {
 		ext = "mkv"
 	}
-	safe := strings.ReplaceAll(item.Name, " ", ".")
+	safe := strings.ReplaceAll(stripIPTVPrefix(item.Name), " ", ".")
 	safe = strings.ReplaceAll(safe, ":", "")
 	safe = strings.ReplaceAll(safe, "/", "")
 

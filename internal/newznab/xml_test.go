@@ -239,6 +239,27 @@ func TestPubDateFallbackToEpoch(t *testing.T) {
 	}
 }
 
+func TestStripIPTVPrefix(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"┃NL┃ Lieve Mama", "Lieve Mama"},
+		{"┃NL┃ HD ┃ Rough Diamonds", "Rough Diamonds"},
+		{"| NL | Some Show", "Some Show"},
+		{"| NL | HD | Some Show", "Some Show"},
+		{"\t┃NL┃ Tabbed Show", "Tabbed Show"},
+		{"No Prefix Show", "No Prefix Show"},
+		{"Regular Movie Title", "Regular Movie Title"},
+	}
+	for _, c := range cases {
+		got := stripIPTVPrefix(c.input)
+		if got != c.want {
+			t.Errorf("stripIPTVPrefix(%q) = %q, want %q", c.input, got, c.want)
+		}
+	}
+}
+
 func TestBuildTitle(t *testing.T) {
 	cases := []struct {
 		item *index.Item
@@ -257,6 +278,15 @@ func TestBuildTitle(t *testing.T) {
 		{
 			&index.Item{Name: "Release Date Only", Year: "", ReleaseDate: "2019-03-22", ContainerExt: "mkv"},
 			"Release.Date.Only.2019.WEB-DL.mkv",
+		},
+		// IPTV prefix stripping: provider prefixes must not appear in Newznab titles.
+		{
+			&index.Item{Name: "┃NL┃ The Matrix", Year: "1999", ContainerExt: "mkv"},
+			"The.Matrix.1999.WEB-DL.mkv",
+		},
+		{
+			&index.Item{Name: "| NL | HD | Inception", Year: "2010", ContainerExt: "mkv"},
+			"Inception.2010.WEB-DL.mkv",
 		},
 	}
 	for _, c := range cases {
