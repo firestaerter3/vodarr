@@ -103,6 +103,7 @@ export default function Settings() {
 
   const [xtreamTest, setXtreamTest] = useState({ loading: false, success: false, error: null })
   const [tmdbTest, setTmdbTest] = useState({ loading: false, success: false, error: null })
+  const [tvdbTest, setTvdbTest] = useState({ loading: false, success: false, error: null })
 
   useEffect(() => {
     fetch('/api/config')
@@ -193,7 +194,7 @@ export default function Settings() {
       const res = await fetch('/api/test-tmdb', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cfg.tmdb),
+        body: JSON.stringify({ api_key: cfg.tmdb.api_key }),
       })
       const data = await res.json()
       if (data.success) {
@@ -207,6 +208,29 @@ export default function Settings() {
     } catch (e) {
       setTmdbTest({ loading: false, success: false, error: e.message })
       setTimeout(() => setTmdbTest(s => ({ ...s, error: null })), 5000)
+    }
+  }
+
+  const testTVDB = async () => {
+    setTvdbTest({ loading: true, success: false, error: null })
+    try {
+      const res = await fetch('/api/test-tvdb', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tvdb_api_key: cfg.tmdb.tvdb_api_key }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setTvdbTest({ loading: false, success: true, error: null })
+        setTimeout(() => setTvdbTest(s => ({ ...s, success: false })), 5000)
+        await saveConfig(buildPayload())
+      } else {
+        setTvdbTest({ loading: false, success: false, error: data.error || 'Connection failed' })
+        setTimeout(() => setTvdbTest(s => ({ ...s, error: null })), 5000)
+      }
+    } catch (e) {
+      setTvdbTest({ loading: false, success: false, error: e.message })
+      setTimeout(() => setTvdbTest(s => ({ ...s, error: null })), 5000)
     }
   }
 
@@ -271,7 +295,19 @@ export default function Settings() {
                 monospace
               />
             </Field>
-            <Field label="TVDB API Key" hint="Optional — enables TVDB direct search for series TMDB can't cross-link. Get a free key at thetvdb.com/api-information">
+            <TestButton
+              onClick={testTMDB}
+              loading={tmdbTest.loading}
+              success={tmdbTest.success}
+              error={tmdbTest.error}
+            />
+          </Section>
+        </div>
+
+        {/* TVDB */}
+        <div className="animate-fade-up animate-fade-up-2">
+          <Section title="TVDB">
+            <Field label="API Key" hint="Optional — enables direct TVDB search for series TMDB can't cross-link. Get a free key at thetvdb.com/api-information">
               <TextInput
                 value={cfg.tmdb.tvdb_api_key}
                 onChange={v => set('tmdb.tvdb_api_key', v)}
@@ -281,10 +317,10 @@ export default function Settings() {
               />
             </Field>
             <TestButton
-              onClick={testTMDB}
-              loading={tmdbTest.loading}
-              success={tmdbTest.success}
-              error={tmdbTest.error}
+              onClick={testTVDB}
+              loading={tvdbTest.loading}
+              success={tvdbTest.success}
+              error={tvdbTest.error}
             />
           </Section>
         </div>

@@ -42,7 +42,7 @@ func NewClient(apiKey string) *Client {
 // or nil if nothing was found.  Authentication is performed lazily on the first
 // call.
 func (c *Client) SearchSeries(ctx context.Context, title string) (*SeriesResult, error) {
-	token, err := c.ensureToken(ctx)
+	token, err := c.EnsureToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("tvdb auth: %w", err)
 	}
@@ -87,9 +87,9 @@ func (c *Client) SearchSeries(ctx context.Context, title string) (*SeriesResult,
 	return &SeriesResult{TVDBID: id, Name: first.Name}, nil
 }
 
-// ensureToken obtains a bearer token if we don't have one yet and returns it.
+// EnsureToken obtains a bearer token if we don't have one yet and returns it.
 // Protected by a mutex so concurrent goroutines don't race on login.
-func (c *Client) ensureToken(ctx context.Context) (string, error) {
+func (c *Client) EnsureToken(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.token != "" {

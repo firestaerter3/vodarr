@@ -14,6 +14,7 @@ import (
 	"github.com/vodarr/vodarr/internal/index"
 	vodarrsync "github.com/vodarr/vodarr/internal/sync"
 	"github.com/vodarr/vodarr/internal/tmdb"
+	"github.com/vodarr/vodarr/internal/tvdb"
 	"github.com/vodarr/vodarr/internal/xtream"
 )
 
@@ -88,6 +89,7 @@ func (h *Handler) registerRoutes(staticFS fs.FS) {
 	h.mux.HandleFunc("PUT /api/config", auth(h.handlePutConfig))
 	h.mux.HandleFunc("POST /api/test-xtream", auth(h.handleTestXtream))
 	h.mux.HandleFunc("POST /api/test-tmdb", auth(h.handleTestTMDB))
+	h.mux.HandleFunc("POST /api/test-tvdb", auth(h.handleTestTVDB))
 	h.mux.HandleFunc("GET /api/health", h.handleHealth) // health always public
 
 	// Serve embedded static frontend; fall back to index.html for SPA routing
@@ -401,6 +403,39 @@ func (h *Handler) handleTestTMDB(w http.ResponseWriter, r *http.Request) {
 	defer tc.Stop()
 
 	if err := tc.Validate(ctx); err != nil {
+		h.writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+
+	h.writeJSON(w, map[string]interface{}{"success": true})
+}
+
+type testTVDBRequest struct {
+	TVDBAPIKey string `json:"tvdb_api_key"`
+}
+
+func (h *Handler) handleTestTVDB(w http.ResponseWriter, r *http.Request) {
+	var req testTVDBRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	h.cfgMu.RLock()
+	storedKey := h.cfg.TMDB.TVDBAPIKey
+	h.cfgMu.RUnlock()
+
+	apiKey := resolveSentinel(req.TVDBAPIKey, storedKey)
+	if apiKey == "" {
+		h.writeJSON(w, map[string]interface{}{"success": false, "error": "no TVDB API key configured"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	tc := tvdb.NewClient(apiKey)
+	if _, err := tc.EnsureToken(ctx); err != nil {
 		h.writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
