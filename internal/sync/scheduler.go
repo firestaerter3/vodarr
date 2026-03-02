@@ -19,8 +19,10 @@ import (
 )
 
 // iptvPrefixRe matches one or more stacked leading IPTV category prefixes such as
-// "| NL |", "| NL | HD |", "| NL | HD | 4K |", etc. in a single pass.
-var iptvPrefixRe = regexp.MustCompile(`^\|\s*(?:[^|]+\|\s*)+`)
+// "| NL |", "| NL | HD |", "┃NL┃", etc. in a single pass.
+// It handles both ASCII pipe (|, U+007C) and the Unicode box-drawing vertical
+// bar (┃, U+2503) that some providers use, plus any leading whitespace/tabs.
+var iptvPrefixRe = regexp.MustCompile(`^[\s]*[|┃]\s*(?:[^|┃]+[|┃]\s*)+`)
 
 // cleanTitleForSearch strips IPTV prefixes and user-defined patterns from a stream
 // name before passing it to TMDB search.

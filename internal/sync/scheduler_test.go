@@ -70,6 +70,21 @@ func TestCleanTitleForSearch(t *testing.T) {
 			input: "| NL |   The Matrix   ",
 			want:  "The Matrix",
 		},
+		{
+			name:  "unicode box-drawing pipe stripped",
+			input: "┃NL┃ Scarface",
+			want:  "Scarface",
+		},
+		{
+			name:  "tab and unicode pipe stripped",
+			input: "\t┃NL┃ Scarface",
+			want:  "Scarface",
+		},
+		{
+			name:  "multiple unicode pipes stripped",
+			input: "┃NL┃ HD┃ Inception",
+			want:  "Inception",
+		},
 	}
 
 	for _, tc := range tests {
