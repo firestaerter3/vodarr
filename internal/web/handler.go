@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -90,6 +91,7 @@ func (h *Handler) registerRoutes(staticFS fs.FS) {
 	h.mux.HandleFunc("POST /api/test-xtream", auth(h.handleTestXtream))
 	h.mux.HandleFunc("POST /api/test-tmdb", auth(h.handleTestTMDB))
 	h.mux.HandleFunc("POST /api/test-tvdb", auth(h.handleTestTVDB))
+	h.mux.HandleFunc("POST /api/restart", auth(h.handleRestart))
 	h.mux.HandleFunc("GET /api/health", h.handleHealth) // health always public
 
 	// Serve embedded static frontend; fall back to index.html for SPA routing
@@ -441,6 +443,15 @@ func (h *Handler) handleTestTVDB(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, map[string]interface{}{"success": true})
+}
+
+func (h *Handler) handleRestart(w http.ResponseWriter, r *http.Request) {
+	h.writeJSON(w, map[string]string{"status": "restarting"})
+	go func() {
+		time.Sleep(150 * time.Millisecond) // let the response flush
+		slog.Info("restarting via API request")
+		os.Exit(0)
+	}()
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {

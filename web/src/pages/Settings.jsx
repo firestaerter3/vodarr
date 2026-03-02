@@ -100,6 +100,7 @@ export default function Settings() {
   const [saveError, setSaveError] = useState(null)
   const [loadError, setLoadError] = useState(null)
   const [restartRequired, setRestartRequired] = useState(false)
+  const [restarting, setRestarting] = useState(false)
 
   const [xtreamTest, setXtreamTest] = useState({ loading: false, success: false, error: null })
   const [tmdbTest, setTmdbTest] = useState({ loading: false, success: false, error: null })
@@ -163,6 +164,22 @@ export default function Settings() {
   const handleSave = async e => {
     e.preventDefault()
     await saveConfig(buildPayload())
+  }
+
+  const handleRestart = async () => {
+    setRestarting(true)
+    try {
+      await fetch('/api/restart', { method: 'POST' })
+    } catch (_) {
+      // expected — server closes connection as it exits
+    }
+    // Poll /api/health until the server is back, then reload
+    const poll = () => {
+      fetch('/api/health')
+        .then(r => r.ok ? window.location.reload() : setTimeout(poll, 500))
+        .catch(() => setTimeout(poll, 500))
+    }
+    setTimeout(poll, 1000)
   }
 
   const testXtream = async () => {
@@ -246,9 +263,22 @@ export default function Settings() {
             Note: Could not load current config ({loadError}). Showing defaults.
           </p>
         )}
-        {restartRequired && (
-          <div className="mt-3 px-4 py-2.5 bg-yellow-400/10 border border-yellow-400/30 rounded font-mono text-[12px] text-yellow-400">
-            Restart required — changes take effect after restarting VODarr.
+        {restartRequired && !restarting && (
+          <div className="mt-3 px-4 py-2.5 bg-yellow-400/10 border border-yellow-400/30 rounded font-mono text-[12px] text-yellow-400 flex items-center justify-between gap-4">
+            <span>Restart required — changes take effect after restarting VODarr.</span>
+            <button
+              type="button"
+              onClick={handleRestart}
+              className="px-3 py-1 bg-yellow-400/20 border border-yellow-400/40 rounded hover:bg-yellow-400/30 transition-all whitespace-nowrap"
+            >
+              Restart Now
+            </button>
+          </div>
+        )}
+        {restarting && (
+          <div className="mt-3 px-4 py-2.5 bg-void-700 border border-void-500 rounded font-mono text-[12px] text-steel-400 flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+            Restarting… page will reload automatically.
           </div>
         )}
       </div>
