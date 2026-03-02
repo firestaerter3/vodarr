@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Dashboard from './pages/Dashboard.jsx'
 import Content from './pages/Content.jsx'
 import Settings from './pages/Settings.jsx'
@@ -40,6 +40,14 @@ function GearIcon() {
 
 export default function App() {
   const [page, setPage] = useState('dashboard')
+  const [version, setVersion] = useState('')
+
+  useEffect(() => {
+    fetch('/api/status')
+      .then(r => r.json())
+      .then(d => { if (d.version) setVersion(d.version) })
+      .catch(() => {})
+  }, [])
 
   return (
     <div className="flex h-full min-h-screen">
@@ -83,7 +91,7 @@ export default function App() {
 
         {/* Footer */}
         <div className="px-5 py-4 border-t border-void-600">
-          <p className="font-mono text-[10px] text-steel-500">v0.1.0</p>
+          {version && <p className="font-mono text-[10px] text-steel-500">v{version}</p>}
         </div>
       </aside>
 

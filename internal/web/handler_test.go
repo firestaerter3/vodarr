@@ -15,7 +15,7 @@ import (
 // makeHandler builds a Handler with the given config and no auth.
 // scheduler is nil — only call endpoints that don't use it.
 func makeHandler(cfg *config.Config, cfgPath string) *Handler {
-	return NewHandler(index.New(), nil, nil, cfg, cfgPath, "", "")
+	return NewHandler(index.New(), nil, nil, cfg, cfgPath, "", "", "test")
 }
 
 func minimalCfg() *config.Config {

@@ -23,6 +23,7 @@ const passwordSentinel = "********"
 type Handler struct {
 	idx       *index.Index
 	scheduler *vodarrsync.Scheduler
+	version   string
 	username  string // 2E: optional basic auth for API endpoints
 	password  string
 	mux       *http.ServeMux
@@ -32,10 +33,11 @@ type Handler struct {
 	cfgPath string
 }
 
-func NewHandler(idx *index.Index, scheduler *vodarrsync.Scheduler, staticFS fs.FS, cfg *config.Config, cfgPath string, username, password string) *Handler {
+func NewHandler(idx *index.Index, scheduler *vodarrsync.Scheduler, staticFS fs.FS, cfg *config.Config, cfgPath string, username, password, version string) *Handler {
 	h := &Handler{
 		idx:       idx,
 		scheduler: scheduler,
+		version:   version,
 		username:  username,
 		password:  password,
 		mux:       http.NewServeMux(),
@@ -111,7 +113,12 @@ func (h *Handler) registerRoutes(staticFS fs.FS) {
 }
 
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
-	h.writeJSON(w, h.scheduler.Status())
+	status := h.scheduler.Status()
+	type statusWithVersion struct {
+		vodarrsync.Status
+		Version string `json:"version"`
+	}
+	h.writeJSON(w, statusWithVersion{Status: status, Version: h.version})
 }
 
 func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request) {
