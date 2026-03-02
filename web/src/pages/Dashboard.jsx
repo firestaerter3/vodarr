@@ -41,23 +41,30 @@ function StatCard({ label, value, sub, accent, delay }) {
 }
 
 function SyncProgress({ progress }) {
-  if (!progress || !progress.total) return null
-  const pct = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0
+  if (!progress || !progress.stage) return null
+  const known = progress.total > 0
+  const pct = known ? Math.round((progress.current / progress.total) * 100) : 0
   return (
     <div className="mt-4">
       <div className="flex justify-between mb-1.5">
         <span className="font-mono text-[11px] text-steel-400">{progress.stage}</span>
-        <span className="font-mono text-[11px] text-lime-400">{pct}%</span>
+        {known && <span className="font-mono text-[11px] text-lime-400">{pct}%</span>}
       </div>
       <div className="h-1 bg-void-600 rounded-full overflow-hidden">
-        <div
-          className="progress-bar h-full rounded-full transition-all duration-300"
-          style={{ width: `${pct}%` }}
-        />
+        {known ? (
+          <div
+            className="progress-bar h-full rounded-full transition-all duration-300"
+            style={{ width: `${pct}%` }}
+          />
+        ) : (
+          <div className="progress-bar h-full rounded-full w-1/3 animate-pulse" />
+        )}
       </div>
-      <p className="mt-1 font-mono text-[10px] text-steel-500">
-        {progress.current.toLocaleString()} / {progress.total.toLocaleString()}
-      </p>
+      {known && (
+        <p className="mt-1 font-mono text-[10px] text-steel-500">
+          {progress.current.toLocaleString()} / {progress.total.toLocaleString()}
+        </p>
+      )}
     </div>
   )
 }
