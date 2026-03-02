@@ -169,9 +169,14 @@ func buildMovieRSSItems(serverURL string, items []*index.Item) []Item {
 func buildEpisodeRSSItems(serverURL string, items []*index.Item, seasonFilter, epFilter int) []Item {
 	var out []Item
 	for _, item := range items {
-		// Skip series with no indexed episodes — they would produce a phantom
-		// result that the qBit handler cannot turn into any STRM files.
 		if len(item.Episodes) == 0 {
+			// No episode data yet (e.g. Xtream fetch failed). In browse mode
+			// (no season/ep filter) emit a series-level placeholder so that
+			// Prowlarr's sync-test query returns non-zero results. Actual grab
+			// requests for these items will fail gracefully in handleGet.
+			if seasonFilter == 0 && epFilter == 0 {
+				out = append(out, itemToRSS(serverURL, item))
+			}
 			continue
 		}
 		for _, ep := range item.Episodes {
