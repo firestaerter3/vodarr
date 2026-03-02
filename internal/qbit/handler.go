@@ -29,6 +29,7 @@ type Handler struct {
 	password      string
 	mu            sync.RWMutex
 	sessions      map[string]struct{} // active session IDs
+	categories    map[string]string   // name → savePath; populated by createCategory
 	descriptorCli *http.Client        // 2A+3D: dedicated client for descriptor fetches
 	mux           *http.ServeMux
 }
@@ -41,7 +42,8 @@ func NewHandler(store *Store, writer *strm.Writer, xc *xtream.Client, savePath, 
 		savePath: savePath,
 		username: username,
 		password: password,
-		sessions: make(map[string]struct{}),
+		sessions:   make(map[string]struct{}),
+		categories: make(map[string]string),
 		// 2A+3D: dedicated HTTP client for descriptor fetches
 		descriptorCli: &http.Client{Timeout: 10 * time.Second},
 		mux:            http.NewServeMux(),
@@ -99,7 +101,7 @@ func (h *Handler) registerRoutes() {
 	h.mux.HandleFunc("POST /api/v2/torrents/pause", auth(h.handleStub))
 	h.mux.HandleFunc("POST /api/v2/torrents/resume", auth(h.handleStub))
 	h.mux.HandleFunc("GET /api/v2/torrents/categories", auth(h.handleCategories))
-	h.mux.HandleFunc("POST /api/v2/torrents/createCategory", auth(h.handleStub))
+	h.mux.HandleFunc("POST /api/v2/torrents/createCategory", auth(h.handleCreateCategory))
 	h.mux.HandleFunc("POST /api/v2/torrents/setCategory", auth(h.handleStub))
 	h.mux.HandleFunc("POST /api/v2/torrents/setSavePath", auth(h.handleStub))
 
@@ -527,7 +529,25 @@ func (h *Handler) handleTorrentsDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleCategories(w http.ResponseWriter, r *http.Request) {
-	h.writeJSON(w, map[string]interface{}{})
+	h.mu.RLock()
+	out := make(map[string]interface{}, len(h.categories))
+	for name, path := range h.categories {
+		out[name] = map[string]string{"name": name, "savePath": path}
+	}
+	h.mu.RUnlock()
+	h.writeJSON(w, out)
+}
+
+func (h *Handler) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	name := r.FormValue("category")
+	savePath := r.FormValue("savePath")
+	if name != "" {
+		h.mu.Lock()
+		h.categories[name] = savePath
+		h.mu.Unlock()
+	}
+	w.Write([]byte("Ok."))
 }
 
 func (h *Handler) handleSyncMaindata(w http.ResponseWriter, r *http.Request) {
