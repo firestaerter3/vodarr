@@ -25,7 +25,8 @@ type XtreamConfig struct {
 }
 
 type TMDBConfig struct {
-	APIKey string `yaml:"api_key"`
+	APIKey     string `yaml:"api_key"`
+	TVDBAPIKey string `yaml:"tvdb_api_key"` // optional; enables TVDB series fallback
 }
 
 type OutputConfig struct {
