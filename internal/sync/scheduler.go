@@ -15,6 +15,7 @@ import (
 	"github.com/vodarr/vodarr/internal/config"
 	"github.com/vodarr/vodarr/internal/index"
 	"github.com/vodarr/vodarr/internal/tmdb"
+	"github.com/vodarr/vodarr/internal/tvdb"
 	"github.com/vodarr/vodarr/internal/xtream"
 )
 
@@ -104,6 +105,7 @@ type Scheduler struct {
 	cfg          *config.Config
 	xtream       *xtream.Client
 	tmdb         *tmdb.Client
+	tvdb         *tvdb.Client // nil when tvdb_api_key is not configured
 	idx          *index.Index
 	userPatterns []*regexp.Regexp
 	cachePath    string
@@ -127,10 +129,15 @@ func NewScheduler(cfg *config.Config, xc *xtream.Client, tc *tmdb.Client, idx *i
 		}
 		patterns = append(patterns, re)
 	}
+	var tvdbClient *tvdb.Client
+	if cfg.TMDB.TVDBAPIKey != "" {
+		tvdbClient = tvdb.NewClient(cfg.TMDB.TVDBAPIKey)
+	}
 	return &Scheduler{
 		cfg:          cfg,
 		xtream:       xc,
 		tmdb:         tc,
+		tvdb:         tvdbClient,
 		idx:          idx,
 		userPatterns: patterns,
 		cachePath:    CachePath(cfg.Output.Path),
@@ -583,6 +590,15 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 					}
 				}
 
+				// TVDB fallback: series that got a TMDB ID but no TVDB ID
+				// (TMDB's external_ids had no TVDB link) are searched
+				// directly on TVDB by title.
+				if item.Type == index.TypeSeries && item.TVDBId == "" && s.tvdb != nil {
+					if err := s.resolveByTVDB(ctx, item); err != nil {
+						slog.Warn("TVDB fallback failed", "name", item.Name, "error", err)
+					}
+				}
+
 				n := atomic.AddInt64(&progressN, 1)
 				s.setProgress("Enriching via TMDB", int(n), total)
 			}
@@ -631,6 +647,20 @@ func (s *Scheduler) resolveByTitle(ctx context.Context, item *index.Item) error 
 		if result != nil {
 			item.TMDBId = strconv.Itoa(result.ID)
 		}
+	}
+	return nil
+}
+
+// resolveByTVDB searches TVDB by title to obtain a TVDB ID for a series that
+// TMDB enrichment could not resolve.
+func (s *Scheduler) resolveByTVDB(ctx context.Context, item *index.Item) error {
+	title := cleanTitleForSearch(item.Name, s.userPatterns)
+	result, err := s.tvdb.SearchSeries(ctx, title)
+	if err != nil {
+		return err
+	}
+	if result != nil {
+		item.TVDBId = strconv.Itoa(result.TVDBID)
 	}
 	return nil
 }
