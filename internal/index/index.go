@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 )
 
@@ -165,12 +166,26 @@ func (idx *Index) SearchByTitle(query string, year string, mediaType MediaType, 
 	if maxResults <= 0 {
 		maxResults = 20
 	}
-	normQuery := normalizeTitle(query)
-
 	idx.mu.RLock()
 	all := idx.allItems
 	idx.mu.RUnlock()
 
+	// Empty query: return first N items (browse / RSS mode)
+	if strings.TrimSpace(query) == "" {
+		results := make([]*Item, 0, maxResults)
+		for _, item := range all {
+			if len(results) >= maxResults {
+				break
+			}
+			if mediaType != "" && item.Type != mediaType {
+				continue
+			}
+			results = append(results, item)
+		}
+		return results
+	}
+
+	normQuery := normalizeTitle(query)
 	candidates := make([]scored, 0)
 	for _, item := range all {
 		if mediaType != "" && item.Type != mediaType {
