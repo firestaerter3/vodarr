@@ -15,9 +15,39 @@ import (
 // Replicates the pattern used in sync/scheduler.go for title cleaning.
 var iptvPrefixRe = regexp.MustCompile(`^[\s]*[|┃]\s*(?:[^|┃]+[|┃]\s*)+`)
 
+// nlGespokenRe matches Dutch audio markers, e.g. "(NL GESPROKEN)" or "[NL Gesproken]".
+var nlGespokenRe = regexp.MustCompile(`(?i)[(\[]NL\s+GESPROKEN[)\]]`)
+
+// yearDashRe matches a trailing dash-separated year, e.g. "Movie - 2021".
+var yearDashRe = regexp.MustCompile(`\s*-\s*\d{4}\s*$`)
+
+// yearBracketRe matches a trailing bracket-enclosed year, e.g. "Movie [2021]".
+var yearBracketRe = regexp.MustCompile(`\s*\[\d{4}\]\s*$`)
+
+// hevcRe matches HEVC codec markers for quality attribute generation.
+var hevcRe = regexp.MustCompile(`(?i)\bHEVC\b`)
+
+// fourKRe matches 4K resolution markers for quality attribute generation.
+var fourKRe = regexp.MustCompile(`\b4K\b`)
+
 // stripIPTVPrefix removes leading IPTV category prefixes from a name.
 func stripIPTVPrefix(s string) string {
 	return strings.TrimSpace(iptvPrefixRe.ReplaceAllString(s, ""))
+}
+
+// sanitizeNameForTitle prepares a stream name for use in an RSS title.
+// It strips the IPTV prefix, removes trailing year noise (year is re-added
+// separately by buildTitle via item.Year), and normalises Dutch audio markers
+// to the Sonarr/Radarr-compatible "DUTCH" token.
+// Quality markers (HEVC, 4K, DOLBY) are intentionally kept because
+// Radarr/Sonarr parse them for quality profile matching.
+func sanitizeNameForTitle(name string) string {
+	s := strings.TrimSpace(iptvPrefixRe.ReplaceAllString(name, ""))
+	s = yearDashRe.ReplaceAllString(s, "")
+	s = yearBracketRe.ReplaceAllString(s, "")
+	s = nlGespokenRe.ReplaceAllString(s, "DUTCH")
+	// Normalise any double spaces left after stripping.
+	return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
 }
 
 // RSS is the root RSS 2.0 document.
@@ -210,7 +240,7 @@ func episodeToRSS(serverURL string, series *index.Item, ep index.EpisodeItem) It
 	downloadURL := fmt.Sprintf("%s/api?t=get&id=%d&type=series&episode_id=%d",
 		serverURL, series.XtreamID, ep.EpisodeID)
 
-	seriesSafe := strings.ReplaceAll(stripIPTVPrefix(series.Name), " ", ".")
+	seriesSafe := strings.ReplaceAll(sanitizeNameForTitle(series.Name), " ", ".")
 	seriesSafe = strings.ReplaceAll(seriesSafe, ":", "")
 	seriesSafe = strings.ReplaceAll(seriesSafe, "/", "")
 
@@ -249,6 +279,15 @@ func episodeToRSS(serverURL string, series *index.Item, ep index.EpisodeItem) It
 	}
 	if series.IMDBId != "" {
 		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "imdbid", Value: series.IMDBId})
+	}
+	if hevcRe.MatchString(series.Name) {
+		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "video_codec", Value: "x265"})
+	}
+	if fourKRe.MatchString(series.Name) {
+		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "resolution", Value: "2160p"})
+	}
+	if nlGespokenRe.MatchString(series.Name) {
+		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "language", Value: "nl"})
 	}
 
 	return rssItem
@@ -303,6 +342,15 @@ func itemToRSS(serverURL string, item *index.Item) Item {
 	if item.Rating > 0 {
 		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "rating", Value: fmt.Sprintf("%.1f", item.Rating)})
 	}
+	if hevcRe.MatchString(item.Name) {
+		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "video_codec", Value: "x265"})
+	}
+	if fourKRe.MatchString(item.Name) {
+		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "resolution", Value: "2160p"})
+	}
+	if nlGespokenRe.MatchString(item.Name) {
+		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "language", Value: "nl"})
+	}
 
 	return rssItem
 }
@@ -326,7 +374,7 @@ func buildTitle(item *index.Item) string {
 	if ext == "" {
 		ext = "mkv"
 	}
-	safe := strings.ReplaceAll(stripIPTVPrefix(item.Name), " ", ".")
+	safe := strings.ReplaceAll(sanitizeNameForTitle(item.Name), " ", ".")
 	safe = strings.ReplaceAll(safe, ":", "")
 	safe = strings.ReplaceAll(safe, "/", "")
 

@@ -27,20 +27,54 @@ var iptvPrefixRe = regexp.MustCompile(`^[\s]*[|┃]\s*(?:[^|┃]+[|┃]\s*)+`)
 // yearInParensRe matches a trailing parenthesised 4-digit year, e.g. "(1993)".
 var yearInParensRe = regexp.MustCompile(`\s*\((\d{4})\)\s*$`)
 
+// yearDashRe matches a trailing dash-separated 4-digit year, e.g. "Movie - 2021".
+var yearDashRe = regexp.MustCompile(`\s*-\s*(\d{4})\s*$`)
+
+// yearBracketRe matches a trailing bracket-enclosed 4-digit year, e.g. "Movie [2021]".
+var yearBracketRe = regexp.MustCompile(`\s*\[(\d{4})\]\s*$`)
+
+// hevcRe matches HEVC codec markers in stream names.
+var hevcRe = regexp.MustCompile(`(?i)\bHEVC\b`)
+
+// fourKRe matches 4K resolution markers in stream names.
+var fourKRe = regexp.MustCompile(`\b4K\b`)
+
+// dolbyRe matches common Dolby markers in stream names, e.g. "[DOLBY]", "(DOLBY)", "DOLBY".
+var dolbyRe = regexp.MustCompile(`(?i)[\[(]DOLBY[^\])\[(]*[\])]|\bDOLBY\b`)
+
+// nlGespokenRe matches Dutch audio markers in stream names, e.g. "(NL GESPROKEN)" or "[NL Gesproken]".
+var nlGespokenRe = regexp.MustCompile(`(?i)[(\[]NL\s+GESPROKEN[)\]]`)
+
 // extractTrailingYear returns the 4-digit year embedded at the end of a name
-// like "Vrouwenvleugel (1993)", or "" if none is found.
+// (parens, dash, or bracket), or "" if none is found.
 func extractTrailingYear(name string) string {
 	if m := yearInParensRe.FindStringSubmatch(name); m != nil {
+		return m[1]
+	}
+	if m := yearDashRe.FindStringSubmatch(name); m != nil {
+		return m[1]
+	}
+	if m := yearBracketRe.FindStringSubmatch(name); m != nil {
 		return m[1]
 	}
 	return ""
 }
 
-// cleanTitleForSearch strips IPTV prefixes, trailing parenthesised years, and
-// user-defined patterns from a stream name before passing it to TMDB search.
+// cleanTitleForSearch strips IPTV prefixes, quality/language markers, trailing
+// year noise, and user-defined patterns from a stream name before passing it
+// to TMDB search.  Quality markers (HEVC, 4K, DOLBY) are stripped first so
+// that end-anchored year patterns still match when a marker follows the year.
 func cleanTitleForSearch(name string, patterns []*regexp.Regexp) string {
 	title := iptvPrefixRe.ReplaceAllString(name, "")
+	// Strip quality/language markers before year patterns so anchors work
+	// correctly when markers appear after the year (e.g. "Movie - 2021 HEVC").
+	title = hevcRe.ReplaceAllString(title, "")
+	title = fourKRe.ReplaceAllString(title, "")
+	title = dolbyRe.ReplaceAllString(title, "")
+	title = nlGespokenRe.ReplaceAllString(title, "")
 	title = yearInParensRe.ReplaceAllString(title, "")
+	title = yearDashRe.ReplaceAllString(title, "")
+	title = yearBracketRe.ReplaceAllString(title, "")
 	for _, re := range patterns {
 		title = re.ReplaceAllString(title, "")
 	}

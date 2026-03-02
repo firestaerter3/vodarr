@@ -137,3 +137,64 @@ func TestCleanTitleStripsTrailingYear(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractTrailingYearAllPatterns(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		// Parens (existing)
+		{"Movie (1993)", "1993"},
+		// Dash
+		{"Movie - 2021", "2021"},
+		{"Movie - 2005 ", "2005"},
+		// Bracket
+		{"Movie [2010]", "2010"},
+		{"Movie [1999] ", "1999"},
+		// No match
+		{"No Year Here", ""},
+		{"Bad Year (99)", ""},
+	}
+	for _, c := range cases {
+		got := extractTrailingYear(c.input)
+		if got != c.want {
+			t.Errorf("extractTrailingYear(%q) = %q, want %q", c.input, got, c.want)
+		}
+	}
+}
+
+func TestCleanTitleQualityMarkers(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		// HEVC stripped
+		{"The Matrix HEVC", "The Matrix"},
+		{"The Matrix hevc", "The Matrix"},
+		// 4K stripped
+		{"Inception 4K", "Inception"},
+		// DOLBY stripped (various forms)
+		{"Movie [DOLBY]", "Movie"},
+		{"Movie (DOLBY)", "Movie"},
+		{"Movie DOLBY", "Movie"},
+		// NL GESPROKEN stripped
+		{"Movie (NL GESPROKEN)", "Movie"},
+		{"Movie [NL Gesproken]", "Movie"},
+		// Dash year stripped
+		{"Movie - 2021", "Movie"},
+		// Bracket year stripped
+		{"Movie [2021]", "Movie"},
+		// Marker after year: HEVC stripped first so year anchor works
+		{"Movie - 2021 HEVC", "Movie"},
+		{"Movie [2021] 4K", "Movie"},
+		// Combined
+		{"Movie HEVC 4K [DOLBY] - 2020", "Movie"},
+		{"┃NL┃ Movie HEVC - 2021", "Movie"},
+	}
+	for _, c := range cases {
+		got := cleanTitleForSearch(c.input, nil)
+		if got != c.want {
+			t.Errorf("cleanTitleForSearch(%q) = %q, want %q", c.input, got, c.want)
+		}
+	}
+}

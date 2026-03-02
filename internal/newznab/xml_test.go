@@ -288,6 +288,35 @@ func TestBuildTitle(t *testing.T) {
 			&index.Item{Name: "| NL | HD | Inception", Year: "2010", ContainerExt: "mkv"},
 			"Inception.2010.WEB-DL.mkv",
 		},
+		// Dash year stripped (year already provided via item.Year).
+		{
+			&index.Item{Name: "Some Movie - 2021", Year: "2021", ContainerExt: "mkv"},
+			"Some.Movie.2021.WEB-DL.mkv",
+		},
+		// Bracket year stripped.
+		{
+			&index.Item{Name: "Some Movie [2021]", Year: "2021", ContainerExt: "mkv"},
+			"Some.Movie.2021.WEB-DL.mkv",
+		},
+		// NL GESPROKEN replaced with DUTCH.
+		{
+			&index.Item{Name: "Lieve Mama (NL GESPROKEN)", Year: "2018", ContainerExt: "mkv"},
+			"Lieve.Mama.DUTCH.2018.WEB-DL.mkv",
+		},
+		{
+			&index.Item{Name: "Some Show [NL Gesproken]", Year: "2022", ContainerExt: "mkv"},
+			"Some.Show.DUTCH.2022.WEB-DL.mkv",
+		},
+		// HEVC kept in title (quality profile parsing).
+		{
+			&index.Item{Name: "The Matrix HEVC", Year: "1999", ContainerExt: "mkv"},
+			"The.Matrix.HEVC.1999.WEB-DL.mkv",
+		},
+		// 4K kept in title.
+		{
+			&index.Item{Name: "Inception 4K - 2010", Year: "2010", ContainerExt: "mkv"},
+			"Inception.4K.2010.WEB-DL.mkv",
+		},
 	}
 	for _, c := range cases {
 		got := buildTitle(c.item)
@@ -296,4 +325,60 @@ func TestBuildTitle(t *testing.T) {
 				c.item.Name, c.item.Year, c.item.ReleaseDate, got, c.want)
 		}
 	}
+}
+
+func TestQualityAttrs(t *testing.T) {
+	checkAttr := func(t *testing.T, items []Item, name, value string) {
+		t.Helper()
+		for _, item := range items {
+			for _, attr := range item.Attrs {
+				if attr.Name == name && attr.Value == value {
+					return
+				}
+			}
+		}
+		t.Errorf("expected attr %s=%q not found", name, value)
+	}
+	noAttr := func(t *testing.T, items []Item, name string) {
+		t.Helper()
+		for _, item := range items {
+			for _, attr := range item.Attrs {
+				if attr.Name == name {
+					t.Errorf("unexpected attr %s=%q present", name, attr.Value)
+				}
+			}
+		}
+	}
+
+	hevcMovie := &index.Item{
+		Type: index.TypeMovie, XtreamID: 1,
+		Name: "Movie HEVC", Year: "2020",
+	}
+	fourKMovie := &index.Item{
+		Type: index.TypeMovie, XtreamID: 2,
+		Name: "Movie 4K", Year: "2020",
+	}
+	nlMovie := &index.Item{
+		Type: index.TypeMovie, XtreamID: 3,
+		Name: "Movie (NL GESPROKEN)", Year: "2020",
+	}
+	plainMovie := &index.Item{
+		Type: index.TypeMovie, XtreamID: 4,
+		Name: "Plain Movie", Year: "2020",
+	}
+
+	hevcItems := buildMovieRSSItems("http://localhost", []*index.Item{hevcMovie})
+	fourKItems := buildMovieRSSItems("http://localhost", []*index.Item{fourKMovie})
+	nlItems := buildMovieRSSItems("http://localhost", []*index.Item{nlMovie})
+	plainItems := buildMovieRSSItems("http://localhost", []*index.Item{plainMovie})
+
+	checkAttr(t, hevcItems, "video_codec", "x265")
+	checkAttr(t, fourKItems, "resolution", "2160p")
+	checkAttr(t, nlItems, "language", "nl")
+
+	noAttr(t, plainItems, "video_codec")
+	noAttr(t, plainItems, "resolution")
+	noAttr(t, plainItems, "language")
+	noAttr(t, hevcItems, "resolution") // HEVC ≠ 4K
+	noAttr(t, fourKItems, "video_codec")
 }
