@@ -24,10 +24,23 @@ import (
 // bar (┃, U+2503) that some providers use, plus any leading whitespace/tabs.
 var iptvPrefixRe = regexp.MustCompile(`^[\s]*[|┃]\s*(?:[^|┃]+[|┃]\s*)+`)
 
-// cleanTitleForSearch strips IPTV prefixes and user-defined patterns from a stream
-// name before passing it to TMDB search.
+// yearInParensRe matches a trailing parenthesised 4-digit year, e.g. "(1993)".
+var yearInParensRe = regexp.MustCompile(`\s*\((\d{4})\)\s*$`)
+
+// extractTrailingYear returns the 4-digit year embedded at the end of a name
+// like "Vrouwenvleugel (1993)", or "" if none is found.
+func extractTrailingYear(name string) string {
+	if m := yearInParensRe.FindStringSubmatch(name); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// cleanTitleForSearch strips IPTV prefixes, trailing parenthesised years, and
+// user-defined patterns from a stream name before passing it to TMDB search.
 func cleanTitleForSearch(name string, patterns []*regexp.Regexp) string {
 	title := iptvPrefixRe.ReplaceAllString(name, "")
+	title = yearInParensRe.ReplaceAllString(title, "")
 	for _, re := range patterns {
 		title = re.ReplaceAllString(title, "")
 	}
@@ -234,11 +247,15 @@ func (s *Scheduler) fetchAll(ctx context.Context) ([]*index.Item, error) {
 		}
 		s.setProgress("Fetching VOD catalog", i+1, len(streams))
 
+		year := st.Year
+		if year == "" {
+			year = extractTrailingYear(st.Name)
+		}
 		item := &index.Item{
 			Type:         index.TypeMovie,
 			XtreamID:     st.ID.Int(),
 			Name:         st.Name,
-			Year:         st.Year,
+			Year:         year,
 			Plot:         st.Plot,
 			Genre:        st.Genre,
 			Rating:       float64(st.Rating),
@@ -432,6 +449,8 @@ func buildSeriesItem(sr xtream.Series) *index.Item {
 	}
 	if len(sr.ReleaseDate) >= 4 {
 		item.Year = sr.ReleaseDate[:4]
+	} else if y := extractTrailingYear(sr.Name); y != "" {
+		item.Year = y
 	}
 	if sr.TMDBId.Int() > 0 {
 		item.TMDBId = strconv.Itoa(sr.TMDBId.Int())

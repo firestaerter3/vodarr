@@ -100,3 +100,40 @@ func TestCleanTitleForSearch(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractTrailingYear(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"Vrouwenvleugel (1993)", "1993"},
+		{"Some Movie (2021)", "2021"},
+		{"No Year Here", ""},
+		{"Bad Year (99)", ""},
+		{"Trailing Space (2010) ", "2010"},
+		{"┃NL┃ Movie (2005)", "2005"},
+	}
+	for _, c := range cases {
+		got := extractTrailingYear(c.input)
+		if got != c.want {
+			t.Errorf("extractTrailingYear(%q) = %q, want %q", c.input, got, c.want)
+		}
+	}
+}
+
+func TestCleanTitleStripsTrailingYear(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"Vrouwenvleugel (1993)", "Vrouwenvleugel"},
+		{"┃NL┃ Vrouwenvleugel (1993)", "Vrouwenvleugel"},
+		{"Scarface", "Scarface"},
+	}
+	for _, c := range cases {
+		got := cleanTitleForSearch(c.input, nil)
+		if got != c.want {
+			t.Errorf("cleanTitleForSearch(%q) = %q, want %q", c.input, got, c.want)
+		}
+	}
+}

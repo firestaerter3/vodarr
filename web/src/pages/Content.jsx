@@ -65,15 +65,23 @@ export default function Content() {
       const q = query.toLowerCase()
       list = list.filter(i => i.Name?.toLowerCase().includes(q))
     }
-    if (filter === 'matched') list = list.filter(i => i.IMDBId || i.TVDBId)
-    if (filter === 'unmatched') list = list.filter(i => !i.IMDBId && !i.TVDBId)
+    // Movies: TMDB alone is sufficient for Radarr to match.
+    // Series: need IMDB or TVDB (Sonarr doesn't match on TMDB).
+    const isMatched = i => tab === 'movies'
+      ? (i.IMDBId || i.TVDBId || i.TMDBId)
+      : (i.IMDBId || i.TVDBId)
+    if (filter === 'matched') list = list.filter(isMatched)
+    if (filter === 'unmatched') list = list.filter(i => !isMatched(i))
     return list
-  }, [items, query, filter])
+  }, [items, query, filter, tab])
 
   const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
 
-  const matchedCount = items.filter(i => i.IMDBId || i.TVDBId).length
+  const isMatched = i => tab === 'movies'
+    ? (i.IMDBId || i.TVDBId || i.TMDBId)
+    : (i.IMDBId || i.TVDBId)
+  const matchedCount = items.filter(isMatched).length
   const matchRate = items.length > 0 ? Math.round((matchedCount / items.length) * 100) : 0
 
   return (
