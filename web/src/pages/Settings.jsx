@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 
 const DEFAULT = {
   xtream: { url: '', username: '', password: '' },
-  tmdb: { api_key: '' },
+  tmdb: { api_key: '', tvdb_api_key: '' },
   output: { path: '/data/strm', movies_dir: 'movies', series_dir: 'tv' },
   sync: { interval: '6h', on_startup: true, parallelism: 10, title_cleanup_patterns: [] },
   server: { newznab_port: 9091, qbit_port: 9092, web_port: 9090 },
@@ -266,6 +266,15 @@ export default function Settings() {
               <TextInput
                 value={cfg.tmdb.api_key}
                 onChange={v => set('tmdb.api_key', v)}
+                type="password"
+                placeholder="••••••••••••••••"
+                monospace
+              />
+            </Field>
+            <Field label="TVDB API Key" hint="Optional — enables TVDB direct search for series TMDB can't cross-link. Get a free key at thetvdb.com/api-information">
+              <TextInput
+                value={cfg.tmdb.tvdb_api_key}
+                onChange={v => set('tmdb.tvdb_api_key', v)}
                 type="password"
                 placeholder="••••••••••••••••"
                 monospace

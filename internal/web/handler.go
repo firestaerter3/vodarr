@@ -175,7 +175,8 @@ type xtreamConfigResp struct {
 }
 
 type tmdbConfigResp struct {
-	APIKey string `json:"api_key"`
+	APIKey     string `json:"api_key"`
+	TVDBAPIKey string `json:"tvdb_api_key"`
 }
 
 type outputConfigResp struct {
@@ -213,7 +214,8 @@ func (h *Handler) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			Password: maskIfSet(cfg.Xtream.Password),
 		},
 		TMDB: tmdbConfigResp{
-			APIKey: maskIfSet(cfg.TMDB.APIKey),
+			APIKey:     maskIfSet(cfg.TMDB.APIKey),
+			TVDBAPIKey: maskIfSet(cfg.TMDB.TVDBAPIKey),
 		},
 		Output: outputConfigResp{
 			Path:      cfg.Output.Path,
@@ -246,7 +248,8 @@ type putConfigRequest struct {
 		Password string `json:"password"`
 	} `json:"xtream"`
 	TMDB struct {
-		APIKey string `json:"api_key"`
+		APIKey     string `json:"api_key"`
+		TVDBAPIKey string `json:"tvdb_api_key"`
 	} `json:"tmdb"`
 	Output struct {
 		Path      string `json:"path"`
@@ -286,6 +289,7 @@ func (h *Handler) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	newCfg.Xtream.Username = req.Xtream.Username
 	newCfg.Xtream.Password = resolveSentinel(req.Xtream.Password, h.cfg.Xtream.Password)
 	newCfg.TMDB.APIKey = resolveSentinel(req.TMDB.APIKey, h.cfg.TMDB.APIKey)
+	newCfg.TMDB.TVDBAPIKey = resolveSentinel(req.TMDB.TVDBAPIKey, h.cfg.TMDB.TVDBAPIKey)
 	newCfg.Output.Path = req.Output.Path
 	newCfg.Output.MoviesDir = req.Output.MoviesDir
 	newCfg.Output.SeriesDir = req.Output.SeriesDir
