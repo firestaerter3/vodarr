@@ -593,7 +593,7 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 				// TVDB fallback: series that got a TMDB ID but no TVDB ID
 				// (TMDB's external_ids had no TVDB link) are searched
 				// directly on TVDB by title.
-				if item.Type == index.TypeSeries && item.TVDBId == "" && s.tvdb != nil {
+				if item.Type == index.TypeSeries && item.TMDBId != "" && item.TVDBId == "" && s.tvdb != nil {
 					if err := s.resolveByTVDB(ctx, item); err != nil {
 						slog.Warn("TVDB fallback failed", "name", item.Name, "error", err)
 					}

@@ -42,7 +42,8 @@ func NewClient(apiKey string) *Client {
 // or nil if nothing was found.  Authentication is performed lazily on the first
 // call.
 func (c *Client) SearchSeries(ctx context.Context, title string) (*SeriesResult, error) {
-	if err := c.ensureToken(ctx); err != nil {
+	token, err := c.ensureToken(ctx)
+	if err != nil {
 		return nil, fmt.Errorf("tvdb auth: %w", err)
 	}
 
@@ -53,7 +54,7 @@ func (c *Client) SearchSeries(ctx context.Context, title string) (*SeriesResult,
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -86,15 +87,18 @@ func (c *Client) SearchSeries(ctx context.Context, title string) (*SeriesResult,
 	return &SeriesResult{TVDBID: id, Name: first.Name}, nil
 }
 
-// ensureToken obtains a bearer token if we don't have one yet.
+// ensureToken obtains a bearer token if we don't have one yet and returns it.
 // Protected by a mutex so concurrent goroutines don't race on login.
-func (c *Client) ensureToken(ctx context.Context) error {
+func (c *Client) ensureToken(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.token != "" {
-		return nil
+		return c.token, nil
 	}
-	return c.login(ctx)
+	if err := c.login(ctx); err != nil {
+		return "", err
+	}
+	return c.token, nil
 }
 
 // login calls POST /login and stores the resulting token.

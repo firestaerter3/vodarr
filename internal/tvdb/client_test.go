@@ -30,11 +30,12 @@ func TestLoginSuccess(t *testing.T) {
 	c := NewClient("testkey")
 	c.baseURL = srv.URL
 
-	if err := c.ensureToken(context.Background()); err != nil {
+	tok, err := c.ensureToken(context.Background())
+	if err != nil {
 		t.Fatalf("ensureToken: %v", err)
 	}
-	if c.token != "tok123" {
-		t.Errorf("token = %q, want %q", c.token, "tok123")
+	if tok != "tok123" {
+		t.Errorf("token = %q, want %q", tok, "tok123")
 	}
 }
 
@@ -47,7 +48,7 @@ func TestLoginInvalidKey(t *testing.T) {
 	c := NewClient("badkey")
 	c.baseURL = srv.URL
 
-	err := c.ensureToken(context.Background())
+	_, err := c.ensureToken(context.Background())
 	if err == nil {
 		t.Fatal("expected error for invalid key, got nil")
 	}
