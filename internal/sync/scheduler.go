@@ -57,6 +57,7 @@ type Scheduler struct {
 	tmdb         *tmdb.Client
 	idx          *index.Index
 	userPatterns []*regexp.Regexp
+	cachePath    string
 
 	mu      gosync.RWMutex // 3A: protects status field
 	syncMu  gosync.Mutex   // 3B: serialises concurrent Sync calls
@@ -83,13 +84,25 @@ func NewScheduler(cfg *config.Config, xc *xtream.Client, tc *tmdb.Client, idx *i
 		tmdb:         tc,
 		idx:          idx,
 		userPatterns: patterns,
+		cachePath:    CachePath(cfg.Output.Path),
 	}
 }
 
-// Start begins the sync scheduler. If OnStartup is true, it syncs immediately.
+// Start begins the sync scheduler. If a cache exists it is loaded immediately
+// so the index is populated before the first sync completes.
 func (s *Scheduler) Start(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	s.cancel = cancel
+
+	// Populate the index from the persisted cache so Newznab returns results
+	// immediately on restart, before the first sync finishes.
+	if cached, err := LoadIndexCache(s.cachePath); err != nil {
+		slog.Warn("index cache load failed, starting empty", "error", err)
+	} else if cached != nil && len(cached.Items) > 0 {
+		s.idx.Replace(cached.Items)
+		movies, series := s.idx.Counts()
+		slog.Info("loaded index from cache", "movies", movies, "series", series, "cached_at", cached.Timestamp)
+	}
 
 	if s.cfg.Sync.OnStartup {
 		go func() {
@@ -149,7 +162,17 @@ func (s *Scheduler) Sync(ctx context.Context) error {
 		return fmt.Errorf("fetch: %w", err)
 	}
 
-	enriched, err := s.enrich(ctx, items)
+	// Build enrichment skip map from the previous sync's cache. Items whose
+	// name and type are unchanged can reuse their IDs without hitting TMDB.
+	var cachedByKey map[string]*index.Item
+	if cached, err := LoadIndexCache(s.cachePath); err == nil && cached != nil {
+		cachedByKey = make(map[string]*index.Item, len(cached.Items))
+		for _, ci := range cached.Items {
+			cachedByKey[fmt.Sprintf("%s:%d", ci.Type, ci.XtreamID)] = ci
+		}
+	}
+
+	enriched, err := s.enrich(ctx, items, cachedByKey)
 	if err != nil {
 		// Enrichment errors are non-fatal; we log and use what we have
 		slog.Warn("enrichment completed with errors", "error", err)
@@ -158,6 +181,11 @@ func (s *Scheduler) Sync(ctx context.Context) error {
 	s.idx.Replace(enriched)
 	movies, series := s.idx.Counts()
 	slog.Info("sync complete", "movies", movies, "series", series)
+
+	if err := SaveIndexCache(s.cachePath, enriched); err != nil {
+		slog.Warn("index cache save failed", "error", err)
+	}
+
 	return nil
 }
 
@@ -412,7 +440,10 @@ func buildSeriesItem(sr xtream.Series) *index.Item {
 // enrich resolves TMDB → IMDB + TVDB IDs for items that have a TMDB ID.
 // It uses a worker pool to overlap HTTP latency while the TMDB client's
 // internal ticker naturally enforces the 30 req/s rate limit.
-func (s *Scheduler) enrich(ctx context.Context, items []*index.Item) ([]*index.Item, error) {
+//
+// cachedByKey is an optional map (keyed by "type:xtreamID") of previously
+// enriched items. Items found in the cache whose name is unchanged skip TMDB.
+func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey map[string]*index.Item) ([]*index.Item, error) {
 	if s.cfg.TMDB.APIKey == "" {
 		slog.Warn("TMDB API key not set; skipping enrichment")
 		return items, nil
@@ -448,6 +479,21 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item) ([]*index.I
 			for item := range workCh {
 				if ctx.Err() != nil {
 					return
+				}
+
+				// Reuse cached IDs for unchanged items to avoid redundant TMDB calls.
+				if cachedByKey != nil {
+					key := fmt.Sprintf("%s:%d", item.Type, item.XtreamID)
+					if ci, ok := cachedByKey[key]; ok && ci.Name == item.Name {
+						if ci.IMDBId != "" || ci.TVDBId != "" {
+							item.IMDBId = ci.IMDBId
+							item.TVDBId = ci.TVDBId
+							item.TMDBId = ci.TMDBId
+							n := atomic.AddInt64(&progressN, 1)
+							s.setProgress("Enriching via TMDB", int(n), total)
+							continue
+						}
+					}
 				}
 
 				if item.TMDBId == "" {
