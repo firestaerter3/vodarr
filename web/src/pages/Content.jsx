@@ -5,6 +5,7 @@ function useContent(type) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    setData(null)
     setLoading(true)
     fetch(`/api/content/${type}`)
       .then(r => r.json())
