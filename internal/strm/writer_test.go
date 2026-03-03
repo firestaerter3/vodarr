@@ -134,6 +134,37 @@ func TestFolderSafe(t *testing.T) {
 	}
 }
 
+func TestFileSafeStripsRTLOverride(t *testing.T) {
+	// U+202E RIGHT-TO-LEFT OVERRIDE is a format char (unicode.Cf)
+	name := "Movie\u202EName"
+	got := fileSafe(name)
+	for _, r := range got {
+		if r == '\u202E' {
+			t.Errorf("fileSafe did not strip RTL override U+202E from %q, got %q", name, got)
+		}
+	}
+}
+
+func TestFileSafeStripsNullByte(t *testing.T) {
+	name := "Movie\x00Name"
+	got := fileSafe(name)
+	for _, r := range got {
+		if r == 0 {
+			t.Errorf("fileSafe did not strip null byte from %q, got %q", name, got)
+		}
+	}
+}
+
+func TestFolderSafeStripsRTLOverride(t *testing.T) {
+	name := "Movie\u202EName"
+	got := folderSafe(name)
+	for _, r := range got {
+		if r == '\u202E' {
+			t.Errorf("folderSafe did not strip RTL override from %q, got %q", name, got)
+		}
+	}
+}
+
 func TestStrmFilePermissions(t *testing.T) {
 	dir := t.TempDir()
 	w := NewWriter(dir, "movies", "tv")

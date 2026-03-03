@@ -103,10 +103,12 @@ func folderSafe(s string) string {
 	return s
 }
 
-// stripControlChars removes ASCII control characters (< 0x20) and null bytes.
+// stripControlChars removes ASCII control characters (< 0x20), null bytes,
+// Unicode control chars (Cc), and Unicode format chars (Cf), which includes
+// bidirectional override characters such as U+202E (RIGHT-TO-LEFT OVERRIDE).
 func stripControlChars(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0 || unicode.Is(unicode.Cc, r) {
+		if r < 0x20 || r == 0 || unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
@@ -115,6 +117,7 @@ func stripControlChars(s string) string {
 
 // fileSafe returns a dot-separated filename-safe string.
 func fileSafe(s string) string {
+	s = stripControlChars(s)
 	s = illegalChars.ReplaceAllString(s, "")
 	s = strings.ReplaceAll(s, " ", ".")
 	for strings.Contains(s, "..") {
