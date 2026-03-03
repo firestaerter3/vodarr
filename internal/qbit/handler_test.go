@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // makeQbitHandler builds a Handler with an empty store and no auth.
@@ -109,6 +110,36 @@ func TestTorrentsInfoAmountLeft(t *testing.T) {
 	}
 	if entries[0].State != string(StatePausedUP) {
 		t.Errorf("state (completed) = %q, want %q", entries[0].State, StatePausedUP)
+	}
+}
+
+func TestSessionTTLEviction(t *testing.T) {
+	h := makeQbitHandler("/data")
+	h.username = "u"
+	h.password = "p"
+
+	// Manually insert an expired session
+	expiredSID := "deadbeef"
+	h.mu.Lock()
+	h.sessions[expiredSID] = time.Now().Add(-25 * time.Hour)
+	h.mu.Unlock()
+
+	// Auth with expired SID should be rejected
+	req := httptest.NewRequest("GET", "/api/v2/app/version", nil)
+	req.AddCookie(&http.Cookie{Name: "SID", Value: expiredSID})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expired session: status = %d, want 403", w.Code)
+	}
+
+	// Expired session must be evicted from map
+	h.mu.RLock()
+	_, stillExists := h.sessions[expiredSID]
+	h.mu.RUnlock()
+	if stillExists {
+		t.Error("expired session was not evicted from map")
 	}
 }
 

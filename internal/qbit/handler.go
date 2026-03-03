@@ -20,6 +20,8 @@ import (
 	"github.com/vodarr/vodarr/internal/xtream"
 )
 
+const sessionTTL = 24 * time.Hour
+
 // Handler impersonates the qBittorrent Web API v2.
 type Handler struct {
 	store         *Store
@@ -29,7 +31,7 @@ type Handler struct {
 	username      string // 2D: optional credentials; empty = no auth
 	password      string
 	mu            sync.RWMutex
-	sessions      map[string]struct{} // active session IDs
+	sessions      map[string]time.Time // sid → last-used time
 	categories    map[string]string   // name → savePath; populated by createCategory
 	descriptorCli *http.Client        // 2A+3D: dedicated client for descriptor fetches
 	mux           *http.ServeMux
@@ -43,7 +45,7 @@ func NewHandler(store *Store, writer *strm.Writer, xc *xtream.Client, savePath, 
 		savePath: savePath,
 		username: username,
 		password: password,
-		sessions:   make(map[string]struct{}),
+		sessions:   make(map[string]time.Time),
 		categories: make(map[string]string),
 		// 2A+3D: dedicated HTTP client for descriptor fetches
 		descriptorCli: &http.Client{Timeout: 10 * time.Second},
@@ -54,7 +56,7 @@ func NewHandler(store *Store, writer *strm.Writer, xc *xtream.Client, savePath, 
 }
 
 // authMiddleware checks the SID cookie when credentials are configured.
-// The login endpoint is excluded.
+// The login endpoint is excluded. Sessions older than sessionTTL are evicted.
 func (h *Handler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if h.username == "" {
@@ -66,9 +68,15 @@ func (h *Handler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "Forbidden.", http.StatusForbidden)
 			return
 		}
-		h.mu.RLock()
-		_, ok := h.sessions[cookie.Value]
-		h.mu.RUnlock()
+		h.mu.Lock()
+		lastUsed, ok := h.sessions[cookie.Value]
+		if ok && time.Since(lastUsed) > sessionTTL {
+			delete(h.sessions, cookie.Value)
+			ok = false
+		} else if ok {
+			h.sessions[cookie.Value] = time.Now()
+		}
+		h.mu.Unlock()
 		if !ok {
 			http.Error(w, "Forbidden.", http.StatusForbidden)
 			return
@@ -128,7 +136,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	sid := randomSID()
 	h.mu.Lock()
-	h.sessions[sid] = struct{}{}
+	h.sessions[sid] = time.Now()
 	h.mu.Unlock()
 
 	http.SetCookie(w, &http.Cookie{
