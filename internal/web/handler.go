@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"syscall"
 	"sync"
 	"time"
 
@@ -449,7 +450,7 @@ func (h *Handler) handleRestart(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		time.Sleep(150 * time.Millisecond) // let the response flush
 		slog.Info("restarting via API request")
-		os.Exit(0)
+		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
 	}()
 }
 
