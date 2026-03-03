@@ -362,16 +362,6 @@ func TestQualityAttrs(t *testing.T) {
 		Type: index.TypeMovie, XtreamID: 3,
 		Name: "Movie (NL GESPROKEN)", Year: "2020",
 	}
-	nlPrefixMovie := &index.Item{
-		Type: index.TypeMovie, XtreamID: 5,
-		Name: "┃NL┃ Verliefd op Ibiza", Year: "2020",
-	}
-	nlPrefixSeries := &index.Item{
-		Type:     index.TypeSeries,
-		XtreamID: 6,
-		Name:     "\t┃NL┃ Zwarte Tulp",
-		Episodes: []index.EpisodeItem{{EpisodeID: 1, Season: 1, EpisodeNum: 1}},
-	}
 	plainMovie := &index.Item{
 		Type: index.TypeMovie, XtreamID: 4,
 		Name: "Plain Movie", Year: "2020",
@@ -380,20 +370,99 @@ func TestQualityAttrs(t *testing.T) {
 	hevcItems := buildMovieRSSItems("http://localhost", []*index.Item{hevcMovie})
 	fourKItems := buildMovieRSSItems("http://localhost", []*index.Item{fourKMovie})
 	nlItems := buildMovieRSSItems("http://localhost", []*index.Item{nlMovie})
-	nlPrefixMovieItems := buildMovieRSSItems("http://localhost", []*index.Item{nlPrefixMovie})
-	nlPrefixSeriesItems := buildEpisodeRSSItems("http://localhost", []*index.Item{nlPrefixSeries}, 0, 0)
 	plainItems := buildMovieRSSItems("http://localhost", []*index.Item{plainMovie})
 
 	checkAttr(t, hevcItems, "video_codec", "x265")
 	checkAttr(t, fourKItems, "resolution", "2160p")
-	checkAttr(t, nlItems, "language", "nl")
-	// IPTV category prefix ┃NL┃ must also produce language=nl
-	checkAttr(t, nlPrefixMovieItems, "language", "nl")
-	checkAttr(t, nlPrefixSeriesItems, "language", "nl")
+	checkAttr(t, nlItems, "language", "nl") // (NL GESPROKEN) form
 
 	noAttr(t, plainItems, "video_codec")
 	noAttr(t, plainItems, "resolution")
 	noAttr(t, plainItems, "language")
 	noAttr(t, hevcItems, "resolution") // HEVC ≠ 4K
 	noAttr(t, fourKItems, "video_codec")
+}
+
+func TestDetectIPTVLanguage(t *testing.T) {
+	cases := []struct {
+		name     string
+		wantLang string
+	}{
+		// NL prefix forms
+		{"┃NL┃ Verliefd op Ibiza", "nl"},
+		{"\t┃NL┃ Zwarte Tulp", "nl"},
+		{"| NL | Some Dutch Show", "nl"},
+		{"┃NL┃ HD┃ Some Show", "nl"},
+		// Other languages via IPTV prefix
+		{"┃DE┃ Some German Show", "de"},
+		{"┃FR┃ Une Série", "fr"},
+		{"┃UK┃ British Show", "en"},
+		{"┃US┃ American Show", "en"},
+		{"┃SE┃ Swedish Show", "sv"},
+		{"┃TR┃ Türk Dizisi", "tr"},
+		// No prefix — no language
+		{"Breaking Bad", ""},
+		{"Plain Movie Title", ""},
+		// Unknown code in prefix — no language
+		{"┃HD┃ Some Show", ""},
+		{"┃4K┃ Some Movie", ""},
+	}
+	for _, c := range cases {
+		got := detectIPTVLanguage(c.name)
+		if got != c.wantLang {
+			t.Errorf("detectIPTVLanguage(%q) = %q, want %q", c.name, got, c.wantLang)
+		}
+	}
+}
+
+func TestIPTVLanguageInRSSItems(t *testing.T) {
+	checkLang := func(t *testing.T, items []Item, want string) {
+		t.Helper()
+		for _, item := range items {
+			for _, attr := range item.Attrs {
+				if attr.Name == "language" {
+					if attr.Value != want {
+						t.Errorf("language attr = %q, want %q", attr.Value, want)
+					}
+					return
+				}
+			}
+		}
+		t.Errorf("no language attr found, want %q", want)
+	}
+	noLang := func(t *testing.T, items []Item) {
+		t.Helper()
+		for _, item := range items {
+			for _, attr := range item.Attrs {
+				if attr.Name == "language" {
+					t.Errorf("unexpected language attr %q", attr.Value)
+				}
+			}
+		}
+	}
+
+	nlSeries := &index.Item{
+		Type: index.TypeSeries, XtreamID: 1,
+		Name:     "┃NL┃ Zwarte Tulp",
+		Episodes: []index.EpisodeItem{{EpisodeID: 1, Season: 1, EpisodeNum: 1}},
+	}
+	deSeries := &index.Item{
+		Type: index.TypeSeries, XtreamID: 2,
+		Name:     "┃DE┃ Tatort",
+		Episodes: []index.EpisodeItem{{EpisodeID: 1, Season: 1, EpisodeNum: 1}},
+	}
+	frMovie := &index.Item{
+		Type: index.TypeMovie, XtreamID: 3,
+		Name: "┃FR┃ Le Film", Year: "2021",
+	}
+	plainSeries := &index.Item{
+		Type: index.TypeSeries, XtreamID: 4,
+		Name:     "Breaking Bad",
+		Episodes: []index.EpisodeItem{{EpisodeID: 1, Season: 1, EpisodeNum: 1}},
+	}
+
+	checkLang(t, buildEpisodeRSSItems("http://localhost", []*index.Item{nlSeries}, 0, 0), "nl")
+	checkLang(t, buildEpisodeRSSItems("http://localhost", []*index.Item{deSeries}, 0, 0), "de")
+	checkLang(t, buildMovieRSSItems("http://localhost", []*index.Item{frMovie}), "fr")
+	noLang(t, buildEpisodeRSSItems("http://localhost", []*index.Item{plainSeries}, 0, 0))
 }

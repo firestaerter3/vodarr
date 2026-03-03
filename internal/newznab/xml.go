@@ -18,9 +18,56 @@ var iptvPrefixRe = regexp.MustCompile(`^[\s]*[|┃]\s*(?:[^|┃]+[|┃]\s*)+`)
 // nlGespokenRe matches Dutch audio markers, e.g. "(NL GESPROKEN)" or "[NL Gesproken]".
 var nlGespokenRe = regexp.MustCompile(`(?i)[(\[]NL\s+GESPROKEN[)\]]`)
 
-// nlCategoryRe matches IPTV category prefixes that indicate Dutch content,
-// e.g. "┃NL┃", "┃NL HD┃", "| NL |".
-var nlCategoryRe = regexp.MustCompile(`(?i)[|┃]\s*NL\b`)
+// iptvLangRe captures the first 2-3 letter country/region code from an IPTV
+// category prefix, e.g. "┃NL┃", "| FR |", "\t┃DE┃ HD┃ Series".
+var iptvLangRe = regexp.MustCompile(`(?i)[|┃]\s*([A-Za-z]{2,3})\s*[|┃\s]`)
+
+// iptvLangMap maps IPTV country/region codes found in category prefixes to
+// ISO 639-1 language codes used by Sonarr/Radarr for language matching.
+var iptvLangMap = map[string]string{
+	"NL": "nl", // Dutch / Netherlands
+	"DE": "de", // German / Germany
+	"FR": "fr", // French / France
+	"UK": "en", // English / United Kingdom
+	"US": "en", // English / United States
+	"EN": "en", // English (explicit code)
+	"ES": "es", // Spanish / Spain
+	"MX": "es", // Mexican Spanish
+	"IT": "it", // Italian
+	"PT": "pt", // Portuguese / Portugal
+	"BR": "pt", // Brazilian Portuguese
+	"SE": "sv", // Swedish
+	"DK": "da", // Danish
+	"NO": "no", // Norwegian
+	"FI": "fi", // Finnish
+	"PL": "pl", // Polish
+	"RU": "ru", // Russian
+	"TR": "tr", // Turkish
+	"HU": "hu", // Hungarian
+	"CZ": "cs", // Czech
+	"SK": "sk", // Slovak
+	"RO": "ro", // Romanian
+	"BG": "bg", // Bulgarian
+	"HR": "hr", // Croatian
+	"GR": "el", // Greek
+	"IL": "he", // Hebrew (Israel)
+	"HE": "he", // Hebrew (explicit code)
+	"AR": "ar", // Arabic
+	"JP": "ja", // Japanese
+	"KR": "ko", // Korean
+	"CN": "zh", // Chinese
+}
+
+// detectIPTVLanguage returns the ISO 639-1 language code for a stream name
+// that contains a recognised IPTV category prefix (e.g. "┃NL┃ Series Name").
+// Returns "" if no known code is detected.
+func detectIPTVLanguage(name string) string {
+	m := iptvLangRe.FindStringSubmatch(name)
+	if len(m) < 2 {
+		return ""
+	}
+	return iptvLangMap[strings.ToUpper(m[1])]
+}
 
 // yearDashRe matches a trailing dash-separated year, e.g. "Movie - 2021".
 var yearDashRe = regexp.MustCompile(`\s*-\s*\d{4}\s*$`)
@@ -290,7 +337,9 @@ func episodeToRSS(serverURL string, series *index.Item, ep index.EpisodeItem) It
 	if fourKRe.MatchString(series.Name) {
 		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "resolution", Value: "2160p"})
 	}
-	if nlGespokenRe.MatchString(series.Name) || nlCategoryRe.MatchString(series.Name) {
+	if lang := detectIPTVLanguage(series.Name); lang != "" {
+		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "language", Value: lang})
+	} else if nlGespokenRe.MatchString(series.Name) {
 		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "language", Value: "nl"})
 	}
 
@@ -352,7 +401,9 @@ func itemToRSS(serverURL string, item *index.Item) Item {
 	if fourKRe.MatchString(item.Name) {
 		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "resolution", Value: "2160p"})
 	}
-	if nlGespokenRe.MatchString(item.Name) || nlCategoryRe.MatchString(item.Name) {
+	if lang := detectIPTVLanguage(item.Name); lang != "" {
+		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "language", Value: lang})
+	} else if nlGespokenRe.MatchString(item.Name) {
 		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "language", Value: "nl"})
 	}
 
