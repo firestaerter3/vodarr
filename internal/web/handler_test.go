@@ -357,3 +357,14 @@ func TestTestTMDBSentinelUsesStoredKey(t *testing.T) {
 		t.Error("response missing 'success' field")
 	}
 }
+
+func TestNoCORSWildcard(t *testing.T) {
+	h := makeHandler(minimalCfg(), "")
+	req := httptest.NewRequest("GET", "/api/health", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got == "*" {
+		t.Errorf("Access-Control-Allow-Origin = %q, must not be wildcard", got)
+	}
+}
