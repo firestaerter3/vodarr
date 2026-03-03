@@ -82,6 +82,11 @@ func SaveSnapshot(path string, snap *Snapshot) error {
 		return err
 	}
 	tmpName := tmp.Name()
+	if err := os.Chmod(tmpName, 0600); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
