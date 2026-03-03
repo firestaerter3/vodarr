@@ -30,6 +30,7 @@ type Handler struct {
 	savePath      string
 	username      string // 2D: optional credentials; empty = no auth
 	password      string
+	newznabHost   string // expected host:port of the Newznab server; validated in processURL
 	mu            sync.RWMutex
 	sessions      map[string]time.Time // sid → last-used time
 	categories    map[string]string   // name → savePath; populated by createCategory
@@ -37,19 +38,24 @@ type Handler struct {
 	mux           *http.ServeMux
 }
 
-func NewHandler(store *Store, writer *strm.Writer, xc *xtream.Client, savePath, username, password string) *Handler {
+func NewHandler(store *Store, writer *strm.Writer, xc *xtream.Client, savePath, username, password, newznabURL string) *Handler {
+	newznabHost := ""
+	if u, err := url.Parse(newznabURL); err == nil {
+		newznabHost = u.Host
+	}
 	h := &Handler{
-		store:    store,
-		writer:   writer,
-		xtream:   xc,
-		savePath: savePath,
-		username: username,
-		password: password,
-		sessions:   make(map[string]time.Time),
-		categories: make(map[string]string),
+		store:       store,
+		writer:      writer,
+		xtream:      xc,
+		savePath:    savePath,
+		username:    username,
+		password:    password,
+		newznabHost: newznabHost,
+		sessions:    make(map[string]time.Time),
+		categories:  make(map[string]string),
 		// 2A+3D: dedicated HTTP client for descriptor fetches
 		descriptorCli: &http.Client{Timeout: 10 * time.Second},
-		mux:            http.NewServeMux(),
+		mux:           http.NewServeMux(),
 	}
 	h.registerRoutes()
 	return h
@@ -140,9 +146,11 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 
 	http.SetCookie(w, &http.Cookie{
-		Name:  "SID",
-		Value: sid,
-		Path:  "/",
+		Name:     "SID",
+		Value:    sid,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
 	})
 	w.Write([]byte("Ok."))
 }
@@ -237,8 +245,8 @@ func (h *Handler) handleTorrentsAdd(w http.ResponseWriter, r *http.Request) {
 const descriptorMaxBytes = 1 << 20 // 1 MB
 
 func (h *Handler) processURL(rawURL, savePath string) error {
-	// 2A: SSRF protection — only allow http/https schemes pointing to ?t=get
-	if err := validateDescriptorURL(rawURL); err != nil {
+	// 2A: SSRF protection — only allow http/https schemes pointing to ?t=get on the Newznab host
+	if err := h.validateDescriptorURL(rawURL); err != nil {
 		return fmt.Errorf("invalid descriptor url: %w", err)
 	}
 
@@ -345,9 +353,10 @@ func (h *Handler) processURL(rawURL, savePath string) error {
 	return nil
 }
 
-// validateDescriptorURL rejects non-http/https schemes and URLs that are not
-// Newznab t=get descriptor requests, preventing SSRF.
-func validateDescriptorURL(rawURL string) error {
+// validateDescriptorURL rejects non-http/https schemes, URLs that are not
+// Newznab t=get descriptor requests, and hosts that don't match the configured
+// Newznab server, preventing SSRF.
+func (h *Handler) validateDescriptorURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("parse url: %w", err)
@@ -357,6 +366,9 @@ func validateDescriptorURL(rawURL string) error {
 	}
 	if u.Query().Get("t") != "get" {
 		return fmt.Errorf("url must be a Newznab t=get request")
+	}
+	if h.newznabHost != "" && u.Host != h.newznabHost {
+		return fmt.Errorf("host %q not allowed: expected %q", u.Host, h.newznabHost)
 	}
 	return nil
 }
