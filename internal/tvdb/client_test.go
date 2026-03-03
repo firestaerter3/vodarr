@@ -2,10 +2,47 @@ package tvdb
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
+
+func makeJWT(exp int64) string {
+	payload, _ := json.Marshal(map[string]int64{"exp": exp})
+	return fmt.Sprintf("header.%s.sig", base64.RawURLEncoding.EncodeToString(payload))
+}
+
+func TestJWTExpiryFutureToken(t *testing.T) {
+	future := time.Now().Add(24 * time.Hour).Unix()
+	tok := makeJWT(future)
+	got := jwtExpiry(tok)
+	if got.IsZero() {
+		t.Fatal("jwtExpiry returned zero time for valid token")
+	}
+	if got.Unix() != future {
+		t.Errorf("exp = %d, want %d", got.Unix(), future)
+	}
+}
+
+func TestJWTExpiryMalformed(t *testing.T) {
+	got := jwtExpiry("notajwt")
+	if !got.IsZero() {
+		t.Errorf("expected zero time for malformed token, got %v", got)
+	}
+}
+
+func TestJWTExpiryNoExpClaim(t *testing.T) {
+	payload, _ := json.Marshal(map[string]string{"sub": "user"})
+	tok := fmt.Sprintf("header.%s.sig", base64.RawURLEncoding.EncodeToString(payload))
+	got := jwtExpiry(tok)
+	if !got.IsZero() {
+		t.Errorf("expected zero time for token without exp, got %v", got)
+	}
+}
 
 // newTestClient wires a Client to the given test server.
 // It pre-populates the token so individual tests don't need to serve /login.

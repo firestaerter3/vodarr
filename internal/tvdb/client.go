@@ -3,11 +3,13 @@ package tvdb
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,8 +22,9 @@ type Client struct {
 	baseURL string
 	http    *http.Client
 
-	mu    sync.Mutex
-	token string
+	mu          sync.Mutex
+	token       string
+	tokenExpiry time.Time
 }
 
 // SeriesResult is a single series match from the TVDB search endpoint.
@@ -87,16 +90,36 @@ func (c *Client) SearchSeries(ctx context.Context, title string) (*SeriesResult,
 	return &SeriesResult{TVDBID: id, Name: first.Name}, nil
 }
 
+// jwtExpiry decodes the exp claim from a JWT token's payload without validating the signature.
+// Returns zero time if the token is malformed or has no exp claim.
+func jwtExpiry(token string) time.Time {
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) != 3 {
+		return time.Time{}
+	}
+	data, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(data, &claims); err != nil || claims.Exp == 0 {
+		return time.Time{}
+	}
+	return time.Unix(claims.Exp, 0)
+}
+
 // EnsureToken obtains a bearer token if we don't have one yet and returns it.
 // Protected by a mutex so concurrent goroutines don't race on login.
 func (c *Client) EnsureToken(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.token != "" {
-		return c.token, nil
-	}
-	if err := c.login(ctx); err != nil {
-		return "", err
+	// Refresh if no token, or token expires within 5 minutes
+	if c.token == "" || (!c.tokenExpiry.IsZero() && time.Until(c.tokenExpiry) < 5*time.Minute) {
+		if err := c.login(ctx); err != nil {
+			return "", err
+		}
 	}
 	return c.token, nil
 }
@@ -137,5 +160,6 @@ func (c *Client) login(ctx context.Context) error {
 		return fmt.Errorf("tvdb login: empty token")
 	}
 	c.token = payload.Data.Token
+	c.tokenExpiry = jwtExpiry(c.token)
 	return nil
 }
