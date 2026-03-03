@@ -83,16 +83,25 @@ func main() {
 
 	// 3E: Store servers for graceful shutdown
 	newznabSrv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Server.NewznabPort),
-		Handler: newznabMux(newznabHandler),
+		Addr:              fmt.Sprintf(":%d", cfg.Server.NewznabPort),
+		Handler:           newznabMux(newznabHandler),
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	qbitSrv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Server.QbitPort),
-		Handler: qbitHandler,
+		Addr:              fmt.Sprintf(":%d", cfg.Server.QbitPort),
+		Handler:           qbitHandler,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	webSrv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Server.WebPort),
-		Handler: webHandler,
+		Addr:              fmt.Sprintf(":%d", cfg.Server.WebPort),
+		Handler:           webHandler,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	errc := make(chan error, 3)
