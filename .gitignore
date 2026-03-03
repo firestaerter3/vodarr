@@ -6,6 +6,9 @@
 config.yml
 /config/
 
+# Local notes with sensitive info (never commit)
+*.local.md
+
 # Frontend build output (goes to internal/web/dist/ at build time)
 web/node_modules/
 web/dist/
