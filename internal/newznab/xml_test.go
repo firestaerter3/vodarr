@@ -279,14 +279,26 @@ func TestBuildTitle(t *testing.T) {
 			&index.Item{Name: "Release Date Only", Year: "", ReleaseDate: "2019-03-22", ContainerExt: "mkv"},
 			"Release.Date.Only.2019.WEB-DL.mkv",
 		},
-		// IPTV prefix stripping: provider prefixes must not appear in Newznab titles.
+		// IPTV prefix stripping + language token injection.
+		// The prefix is removed from the name; the language token is injected
+		// between the year and WEB-DL so Sonarr/Radarr custom formats can match.
 		{
 			&index.Item{Name: "┃NL┃ The Matrix", Year: "1999", ContainerExt: "mkv"},
-			"The.Matrix.1999.WEB-DL.mkv",
+			"The.Matrix.1999.DUTCH.WEB-DL.mkv",
 		},
 		{
 			&index.Item{Name: "| NL | HD | Inception", Year: "2010", ContainerExt: "mkv"},
-			"Inception.2010.WEB-DL.mkv",
+			"Inception.2010.DUTCH.WEB-DL.mkv",
+		},
+		// German IPTV prefix → GERMAN token.
+		{
+			&index.Item{Name: "┃DE┃ Das Boot", Year: "1981", ContainerExt: "mkv"},
+			"Das.Boot.1981.GERMAN.WEB-DL.mkv",
+		},
+		// English IPTV prefix → no token injected (English is default).
+		{
+			&index.Item{Name: "┃UK┃ Peaky Blinders", Year: "2013", ContainerExt: "mkv"},
+			"Peaky.Blinders.2013.WEB-DL.mkv",
 		},
 		// Dash year stripped (year already provided via item.Year).
 		{
@@ -381,6 +393,51 @@ func TestQualityAttrs(t *testing.T) {
 	noAttr(t, plainItems, "language")
 	noAttr(t, hevcItems, "resolution") // HEVC ≠ 4K
 	noAttr(t, fourKItems, "video_codec")
+}
+
+func TestLangTitleTokenInEpisodeTitles(t *testing.T) {
+	ep := index.EpisodeItem{EpisodeID: 1, Season: 1, EpisodeNum: 1, Ext: "mkv"}
+
+	cases := []struct {
+		seriesName  string
+		wantToken   string // empty means token must NOT appear
+		wantAbsent  string // additional token that must not appear
+	}{
+		// NL prefix → DUTCH in title
+		{"┃NL┃ Verliefd op Ibiza", "DUTCH", ""},
+		{"\t┃NL┃ Zwarte Tulp", "DUTCH", ""},
+		{"| NL | Some Dutch Show", "DUTCH", ""},
+		// DE prefix → GERMAN
+		{"┃DE┃ Tatort", "GERMAN", ""},
+		// FR prefix → FRENCH
+		{"┃FR┃ Une Série", "FRENCH", ""},
+		// English prefix → no token
+		{"┃UK┃ British Show", "", "ENGLISH"},
+		{"┃US┃ American Show", "", "ENGLISH"},
+		// Plain name → no token
+		{"Breaking Bad", "", "DUTCH"},
+		// NL GESPROKEN form (no IPTV prefix) → DUTCH via sanitizeNameForTitle, not doubled
+		{"Lieve Mama (NL GESPROKEN)", "DUTCH", ""},
+	}
+
+	for _, c := range cases {
+		series := &index.Item{
+			Type:     index.TypeSeries,
+			XtreamID: 1,
+			Name:     c.seriesName,
+		}
+		item := episodeToRSS("http://localhost", series, ep)
+		if c.wantToken != "" && !strings.Contains(item.Title, c.wantToken) {
+			t.Errorf("episodeToRSS(%q).Title = %q, want token %q", c.seriesName, item.Title, c.wantToken)
+		}
+		if c.wantToken == "" && c.wantAbsent != "" && strings.Contains(item.Title, c.wantAbsent) {
+			t.Errorf("episodeToRSS(%q).Title = %q, must NOT contain %q", c.seriesName, item.Title, c.wantAbsent)
+		}
+		// Verify DUTCH does not appear twice (no double injection)
+		if strings.Count(item.Title, "DUTCH") > 1 {
+			t.Errorf("episodeToRSS(%q).Title = %q, DUTCH appears more than once", c.seriesName, item.Title)
+		}
+	}
 }
 
 func TestDetectIPTVLanguage(t *testing.T) {

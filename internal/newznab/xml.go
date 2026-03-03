@@ -69,6 +69,44 @@ func detectIPTVLanguage(name string) string {
 	return iptvLangMap[strings.ToUpper(m[1])]
 }
 
+// langTitleTokens maps ISO 639-1 language codes to the uppercase title tokens
+// recognised by Sonarr/Radarr custom format rules (e.g. "DUTCH", "GERMAN").
+// English is omitted — it is the default and needs no explicit token.
+var langTitleTokens = map[string]string{
+	"nl": "DUTCH",
+	"de": "GERMAN",
+	"fr": "FRENCH",
+	"es": "SPANISH",
+	"it": "ITALIAN",
+	"pt": "PORTUGUESE",
+	"sv": "SWEDISH",
+	"da": "DANISH",
+	"no": "NORWEGIAN",
+	"fi": "FINNISH",
+	"pl": "POLISH",
+	"ru": "RUSSIAN",
+	"tr": "TURKISH",
+	"hu": "HUNGARIAN",
+	"cs": "CZECH",
+	"sk": "SLOVAK",
+	"ro": "ROMANIAN",
+	"bg": "BULGARIAN",
+	"hr": "CROATIAN",
+	"el": "GREEK",
+	"he": "HEBREW",
+	"ar": "ARABIC",
+	"ja": "JAPANESE",
+	"ko": "KOREAN",
+	"zh": "CHINESE",
+}
+
+// langTitleToken returns the Sonarr/Radarr-compatible uppercase title token
+// for a given ISO 639-1 code (e.g. "nl" → "DUTCH"). Returns "" for English
+// and any unmapped code.
+func langTitleToken(iso639 string) string {
+	return langTitleTokens[iso639]
+}
+
 // yearDashRe matches a trailing dash-separated year, e.g. "Movie - 2021".
 var yearDashRe = regexp.MustCompile(`\s*-\s*\d{4}\s*$`)
 
@@ -299,7 +337,21 @@ func episodeToRSS(serverURL string, series *index.Item, ep index.EpisodeItem) It
 	if ext == "" {
 		ext = "mkv"
 	}
-	title := fmt.Sprintf("%s.%s.WEB-DL.%s", seriesSafe, epTag, ext)
+	// Inject language token between episode tag and WEB-DL so Sonarr/Radarr
+	// custom format rules (which scan the title, not the language attr) can
+	// match the language. Skip if sanitizeNameForTitle already added the token.
+	token := ""
+	if lang := detectIPTVLanguage(series.Name); lang != "" {
+		if t := langTitleToken(lang); t != "" && !strings.Contains(seriesSafe, t) {
+			token = t
+		}
+	}
+	var title string
+	if token != "" {
+		title = fmt.Sprintf("%s.%s.%s.WEB-DL.%s", seriesSafe, epTag, token, ext)
+	} else {
+		title = fmt.Sprintf("%s.%s.WEB-DL.%s", seriesSafe, epTag, ext)
+	}
 
 	rssItem := Item{
 		Title:       title,
@@ -438,8 +490,23 @@ func buildTitle(item *index.Item) string {
 		year = item.ReleaseDate[:4]
 	}
 
+	// Inject language token so Sonarr/Radarr custom format rules can match.
+	// Skip if sanitizeNameForTitle already added the token (e.g. from GESPROKEN).
+	token := ""
+	if lang := detectIPTVLanguage(item.Name); lang != "" {
+		if t := langTitleToken(lang); t != "" && !strings.Contains(safe, t) {
+			token = t
+		}
+	}
+
 	if year != "" {
+		if token != "" {
+			return fmt.Sprintf("%s.%s.%s.WEB-DL.%s", safe, year, token, ext)
+		}
 		return fmt.Sprintf("%s.%s.WEB-DL.%s", safe, year, ext)
+	}
+	if token != "" {
+		return fmt.Sprintf("%s.%s.WEB-DL.%s", safe, token, ext)
 	}
 	return fmt.Sprintf("%s.WEB-DL.%s", safe, ext)
 }
