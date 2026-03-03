@@ -1,8 +1,8 @@
 package sync
 
 import (
-	"crypto/md5"
 	"encoding/json"
+	"hash/fnv"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,16 +35,20 @@ type SeriesEntry struct {
 	Episodes     []index.EpisodeItem `json:"episodes"`
 }
 
-// MovieChecksum returns an MD5 fingerprint of a movie's key fields.
+// MovieChecksum returns an FNV-1a fingerprint of a movie's key fields.
 func MovieChecksum(name, ext string) string {
-	h := md5.Sum([]byte(name + "\x00" + ext))
-	return fmt.Sprintf("%x", h)
+	h := fnv.New64a()
+	h.Write([]byte(name))
+	h.Write([]byte{0})
+	h.Write([]byte(ext))
+	return fmt.Sprintf("%016x", h.Sum64())
 }
 
-// SeriesChecksum returns an MD5 fingerprint of a series' key fields.
+// SeriesChecksum returns an FNV-1a fingerprint of a series' key fields.
 func SeriesChecksum(name, lastModified string, episodeCount int) string {
-	h := md5.Sum([]byte(fmt.Sprintf("%s\x00%s\x00%d", name, lastModified, episodeCount)))
-	return fmt.Sprintf("%x", h)
+	h := fnv.New64a()
+	fmt.Fprintf(h, "%s\x00%s\x00%d", name, lastModified, episodeCount)
+	return fmt.Sprintf("%016x", h.Sum64())
 }
 
 // SnapshotPath returns the canonical path for the snapshot file given the

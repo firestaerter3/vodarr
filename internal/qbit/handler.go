@@ -1,8 +1,8 @@
 package qbit
 
 import (
-	"crypto/md5"
 	"crypto/rand"
+	"hash/fnv"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -276,7 +276,9 @@ func (h *Handler) processURL(rawURL, savePath string) error {
 		return fmt.Errorf("parse descriptor: %w", err)
 	}
 
-	hash := fmt.Sprintf("%x", md5.Sum([]byte(fmt.Sprintf("%s-%d", desc.Type, desc.XtreamID))))
+	hf := fnv.New64a()
+	fmt.Fprintf(hf, "%s-%d", desc.Type, desc.XtreamID)
+	hash := fmt.Sprintf("%016x", hf.Sum64())
 
 	t := &Torrent{
 		Hash:         hash,
