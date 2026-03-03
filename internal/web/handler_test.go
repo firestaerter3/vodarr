@@ -358,6 +358,34 @@ func TestTestTMDBSentinelUsesStoredKey(t *testing.T) {
 	}
 }
 
+func TestAuthRejectsWrongPassword(t *testing.T) {
+	cfg := minimalCfg()
+	h := NewHandler(index.New(), nil, nil, cfg, "", "admin", "secret", "test")
+
+	req := httptest.NewRequest("GET", "/api/config", nil)
+	req.SetBasicAuth("admin", "wrongpassword")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestAuthAcceptsCorrectPassword(t *testing.T) {
+	cfg := minimalCfg()
+	h := NewHandler(index.New(), nil, nil, cfg, "", "admin", "secret", "test")
+
+	req := httptest.NewRequest("GET", "/api/config", nil)
+	req.SetBasicAuth("admin", "secret")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
 func TestNoCORSWildcard(t *testing.T) {
 	h := makeHandler(minimalCfg(), "")
 	req := httptest.NewRequest("GET", "/api/health", nil)

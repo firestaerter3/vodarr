@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"io/fs"
 	"log/slog"
@@ -66,7 +67,9 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		u, p, ok := r.BasicAuth()
-		if !ok || u != h.username || p != h.password {
+		usernameOK := subtle.ConstantTimeCompare([]byte(u), []byte(h.username)) == 1
+		passwordOK := subtle.ConstantTimeCompare([]byte(p), []byte(h.password)) == 1
+		if !ok || !usernameOK || !passwordOK {
 			w.Header().Set("WWW-Authenticate", `Basic realm="VODarr"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return

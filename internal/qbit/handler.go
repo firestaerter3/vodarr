@@ -3,6 +3,7 @@ package qbit
 import (
 	"crypto/md5"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -117,7 +118,9 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()
 		u := r.FormValue("username")
 		p := r.FormValue("password")
-		if u != h.username || p != h.password {
+		usernameOK := subtle.ConstantTimeCompare([]byte(u), []byte(h.username)) == 1
+		passwordOK := subtle.ConstantTimeCompare([]byte(p), []byte(h.password)) == 1
+		if !usernameOK || !passwordOK {
 			w.Write([]byte("Fails."))
 			return
 		}
