@@ -73,6 +73,12 @@ func Save(path string, cfg *Config) error {
 		return fmt.Errorf("creating temp file: %w", err)
 	}
 	tmpName := tmp.Name()
+	// Explicitly restrict config file to owner-only before writing credentials
+	if err := os.Chmod(tmpName, 0600); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("chmod temp file: %w", err)
+	}
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
