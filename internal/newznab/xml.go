@@ -18,6 +18,10 @@ var iptvPrefixRe = regexp.MustCompile(`^[\s]*[|┃]\s*(?:[^|┃]+[|┃]\s*)+`)
 // nlGespokenRe matches Dutch audio markers, e.g. "(NL GESPROKEN)" or "[NL Gesproken]".
 var nlGespokenRe = regexp.MustCompile(`(?i)[(\[]NL\s+GESPROKEN[)\]]`)
 
+// nlCategoryRe matches IPTV category prefixes that indicate Dutch content,
+// e.g. "┃NL┃", "┃NL HD┃", "| NL |".
+var nlCategoryRe = regexp.MustCompile(`(?i)[|┃]\s*NL\b`)
+
 // yearDashRe matches a trailing dash-separated year, e.g. "Movie - 2021".
 var yearDashRe = regexp.MustCompile(`\s*-\s*\d{4}\s*$`)
 
@@ -286,7 +290,7 @@ func episodeToRSS(serverURL string, series *index.Item, ep index.EpisodeItem) It
 	if fourKRe.MatchString(series.Name) {
 		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "resolution", Value: "2160p"})
 	}
-	if nlGespokenRe.MatchString(series.Name) {
+	if nlGespokenRe.MatchString(series.Name) || nlCategoryRe.MatchString(series.Name) {
 		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "language", Value: "nl"})
 	}
 
@@ -348,7 +352,7 @@ func itemToRSS(serverURL string, item *index.Item) Item {
 	if fourKRe.MatchString(item.Name) {
 		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "resolution", Value: "2160p"})
 	}
-	if nlGespokenRe.MatchString(item.Name) {
+	if nlGespokenRe.MatchString(item.Name) || nlCategoryRe.MatchString(item.Name) {
 		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "language", Value: "nl"})
 	}
 

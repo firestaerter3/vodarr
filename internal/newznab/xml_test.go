@@ -362,6 +362,16 @@ func TestQualityAttrs(t *testing.T) {
 		Type: index.TypeMovie, XtreamID: 3,
 		Name: "Movie (NL GESPROKEN)", Year: "2020",
 	}
+	nlPrefixMovie := &index.Item{
+		Type: index.TypeMovie, XtreamID: 5,
+		Name: "┃NL┃ Verliefd op Ibiza", Year: "2020",
+	}
+	nlPrefixSeries := &index.Item{
+		Type:     index.TypeSeries,
+		XtreamID: 6,
+		Name:     "\t┃NL┃ Zwarte Tulp",
+		Episodes: []index.EpisodeItem{{EpisodeID: 1, Season: 1, EpisodeNum: 1}},
+	}
 	plainMovie := &index.Item{
 		Type: index.TypeMovie, XtreamID: 4,
 		Name: "Plain Movie", Year: "2020",
@@ -370,11 +380,16 @@ func TestQualityAttrs(t *testing.T) {
 	hevcItems := buildMovieRSSItems("http://localhost", []*index.Item{hevcMovie})
 	fourKItems := buildMovieRSSItems("http://localhost", []*index.Item{fourKMovie})
 	nlItems := buildMovieRSSItems("http://localhost", []*index.Item{nlMovie})
+	nlPrefixMovieItems := buildMovieRSSItems("http://localhost", []*index.Item{nlPrefixMovie})
+	nlPrefixSeriesItems := buildEpisodeRSSItems("http://localhost", []*index.Item{nlPrefixSeries}, 0, 0)
 	plainItems := buildMovieRSSItems("http://localhost", []*index.Item{plainMovie})
 
 	checkAttr(t, hevcItems, "video_codec", "x265")
 	checkAttr(t, fourKItems, "resolution", "2160p")
 	checkAttr(t, nlItems, "language", "nl")
+	// IPTV category prefix ┃NL┃ must also produce language=nl
+	checkAttr(t, nlPrefixMovieItems, "language", "nl")
+	checkAttr(t, nlPrefixSeriesItems, "language", "nl")
 
 	noAttr(t, plainItems, "video_codec")
 	noAttr(t, plainItems, "resolution")
