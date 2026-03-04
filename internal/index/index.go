@@ -28,6 +28,11 @@ type Item struct {
 	IMDBId string
 	TVDBId string
 
+	// CanonicalName is the authoritative English title from TMDB/TVDB (e.g. "Loving Ibiza: Series").
+	// Empty when enrichment has not resolved a canonical title.
+	// Used in release titles so Sonarr/Radarr can match by title rather than TVDB ID alone.
+	CanonicalName string
+
 	// Metadata
 	Year        string
 	Plot        string

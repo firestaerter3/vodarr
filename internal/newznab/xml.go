@@ -329,7 +329,13 @@ func episodeToRSS(serverURL string, series *index.Item, ep index.EpisodeItem) It
 	downloadURL := fmt.Sprintf("%s/api?t=get&id=%d&type=series&episode_id=%d",
 		serverURL, series.XtreamID, ep.EpisodeID)
 
-	seriesSafe := strings.ReplaceAll(sanitizeNameForTitle(series.Name), " ", ".")
+	// Use canonical TMDB/TVDB title when available so Sonarr/Radarr can match
+	// by title (e.g. "Loving Ibiza: Series" instead of "Verliefd op Ibiza").
+	titleSource := series.Name
+	if series.CanonicalName != "" {
+		titleSource = series.CanonicalName
+	}
+	seriesSafe := strings.ReplaceAll(sanitizeNameForTitle(titleSource), " ", ".")
 	seriesSafe = strings.ReplaceAll(seriesSafe, ":", "")
 	seriesSafe = strings.ReplaceAll(seriesSafe, "/", "")
 
@@ -481,7 +487,12 @@ func buildTitle(item *index.Item) string {
 	if ext == "" {
 		ext = "mkv"
 	}
-	safe := strings.ReplaceAll(sanitizeNameForTitle(item.Name), " ", ".")
+	// Use canonical TMDB/TVDB title when available so Sonarr/Radarr can match by title.
+	titleSource := item.Name
+	if item.CanonicalName != "" {
+		titleSource = item.CanonicalName
+	}
+	safe := strings.ReplaceAll(sanitizeNameForTitle(titleSource), " ", ".")
 	safe = strings.ReplaceAll(safe, ":", "")
 	safe = strings.ReplaceAll(safe, "/", "")
 

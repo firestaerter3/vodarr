@@ -551,6 +551,7 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 							item.IMDBId = ci.IMDBId
 							item.TVDBId = ci.TVDBId
 							item.TMDBId = ci.TMDBId
+							item.CanonicalName = ci.CanonicalName
 							n := atomic.AddInt64(&progressN, 1)
 							s.setProgress("Enriching via TMDB", int(n), total)
 							continue
@@ -639,6 +640,9 @@ func (s *Scheduler) resolveByTitle(ctx context.Context, item *index.Item) error 
 		}
 		if result != nil {
 			item.TMDBId = strconv.Itoa(result.ID)
+			if result.Title != "" {
+				item.CanonicalName = result.Title
+			}
 		}
 	case index.TypeSeries:
 		result, err := s.tmdb.SearchTV(ctx, title, year)
@@ -647,6 +651,9 @@ func (s *Scheduler) resolveByTitle(ctx context.Context, item *index.Item) error 
 		}
 		if result != nil {
 			item.TMDBId = strconv.Itoa(result.ID)
+			if result.Name != "" {
+				item.CanonicalName = result.Name
+			}
 		}
 	}
 	return nil
@@ -662,6 +669,9 @@ func (s *Scheduler) resolveByTVDB(ctx context.Context, item *index.Item) error {
 	}
 	if result != nil {
 		item.TVDBId = strconv.Itoa(result.TVDBID)
+		if result.Name != "" && item.CanonicalName == "" {
+			item.CanonicalName = result.Name
+		}
 	}
 	return nil
 }
