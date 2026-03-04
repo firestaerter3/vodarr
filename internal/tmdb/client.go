@@ -55,11 +55,10 @@ func NewClient(apiKey string) *Client {
 // It bypasses the rate limiter and cache, making a direct HTTP request.
 func (c *Client) Validate(ctx context.Context) error {
 	u := c.baseURL + "/authentication"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u+"?api_key="+c.apiKey, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("http get /authentication: %w", err)
@@ -238,15 +237,13 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out in
 			q.Set(k, v)
 		}
 	}
-	if len(q) > 0 {
-		u += "?" + q.Encode()
-	}
+	q.Set("api_key", c.apiKey)
+	u += "?" + q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("http get %s: %w", path, err)
