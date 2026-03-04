@@ -544,10 +544,12 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 				}
 
 				// Reuse cached IDs for unchanged items to avoid redundant TMDB calls.
+				// Require CanonicalName to be set so items that were cached before
+				// the canonical-name feature was introduced get re-enriched once.
 				if cachedByKey != nil {
 					key := fmt.Sprintf("%s:%d", item.Type, item.XtreamID)
 					if ci, ok := cachedByKey[key]; ok && ci.Name == item.Name {
-						if ci.IMDBId != "" || ci.TVDBId != "" {
+						if (ci.IMDBId != "" || ci.TVDBId != "") && ci.CanonicalName != "" {
 							item.IMDBId = ci.IMDBId
 							item.TVDBId = ci.TVDBId
 							item.TMDBId = ci.TMDBId
