@@ -2,11 +2,12 @@ package qbit
 
 import (
 	"crypto/rand"
-	"hash/fnv"
+	"crypto/sha1"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,9 +17,30 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vodarr/vodarr/internal/bencode"
 	"github.com/vodarr/vodarr/internal/strm"
 	"github.com/vodarr/vodarr/internal/xtream"
 )
+
+// itemDescriptor is the JSON structure embedded in both the Newznab JSON
+// response (legacy URL path) and the torrent comment field (Torznab path).
+type itemDescriptor struct {
+	XtreamID     int    `json:"xtream_id"`
+	Type         string `json:"type"`
+	Name         string `json:"name"`
+	Year         string `json:"year"`
+	IMDBId       string `json:"imdb_id"`
+	TVDBId       string `json:"tvdb_id"`
+	TMDBId       string `json:"tmdb_id"`
+	ContainerExt string `json:"container_ext"`
+	Episodes     []struct {
+		EpisodeID  int    `json:"EpisodeID"`
+		Season     int    `json:"Season"`
+		EpisodeNum int    `json:"EpisodeNum"`
+		Title      string `json:"Title"`
+		Ext        string `json:"Ext"`
+	} `json:"episodes"`
+}
 
 const sessionTTL = 24 * time.Hour
 
@@ -205,27 +227,48 @@ func (h *Handler) handleTorrentsAdd(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()
 	}
 
-	// Get the URL(s) from the form — Sonarr/Radarr send "urls" field
-	urls := r.FormValue("urls")
-	if urls == "" {
-		urls = r.FormValue("url")
-	}
-
 	savePath := r.FormValue("savepath")
 	if savePath == "" {
 		savePath = h.savePath
 	}
 
-	category := r.FormValue("category")
-	_ = category
+	// Torznab path: Sonarr/Radarr upload the .torrent file directly.
+	if r.MultipartForm != nil && len(r.MultipartForm.File["torrents"]) > 0 {
+		for _, fh := range r.MultipartForm.File["torrents"] {
+			f, err := fh.Open()
+			if err != nil {
+				slog.Error("torrents/add: open uploaded file", "error", err)
+				http.Error(w, "Fails.", http.StatusInternalServerError)
+				return
+			}
+			data, err := io.ReadAll(io.LimitReader(f, descriptorMaxBytes))
+			f.Close()
+			if err != nil {
+				slog.Error("torrents/add: read uploaded file", "error", err)
+				http.Error(w, "Fails.", http.StatusInternalServerError)
+				return
+			}
+			if err := h.processTorrentFile(data, savePath); err != nil {
+				slog.Error("torrents/add: torrent file processing failed", "error", err)
+				http.Error(w, "Fails.", http.StatusInternalServerError)
+				return
+			}
+		}
+		w.Write([]byte("Ok."))
+		return
+	}
 
+	// Newznab/URL path (legacy): Sonarr/Radarr send the descriptor URL.
+	urls := r.FormValue("urls")
 	if urls == "" {
-		slog.Warn("torrents/add: no urls provided")
+		urls = r.FormValue("url")
+	}
+	if urls == "" {
+		slog.Warn("torrents/add: no urls or torrent files provided")
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 
-	// Each URL is on its own line
 	for _, rawURL := range strings.Split(strings.TrimSpace(urls), "\n") {
 		rawURL = strings.TrimSpace(rawURL)
 		if rawURL == "" {
@@ -244,42 +287,69 @@ func (h *Handler) handleTorrentsAdd(w http.ResponseWriter, r *http.Request) {
 // descriptorMaxBytes is the maximum size we'll read from a descriptor response.
 const descriptorMaxBytes = 1 << 20 // 1 MB
 
+// processTorrentFile decodes a bencode .torrent file, extracts the JSON
+// descriptor from the comment field, and dispatches to processDescriptor.
+// The info hash (SHA1 of bencoded info dict) is used as the tracking hash so
+// that Sonarr/Radarr can find the torrent by the hash they computed locally.
+func (h *Handler) processTorrentFile(data []byte, savePath string) error {
+	decoded, err := bencode.Decode(data)
+	if err != nil {
+		return fmt.Errorf("decode torrent: %w", err)
+	}
+	torrentDict, ok := decoded.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("torrent is not a bencode dict")
+	}
+	commentStr, ok := torrentDict["comment"].(string)
+	if !ok {
+		return fmt.Errorf("torrent missing comment field")
+	}
+	infoRaw, ok := torrentDict["info"]
+	if !ok {
+		return fmt.Errorf("torrent missing info dict")
+	}
+	infoDict, ok := infoRaw.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("torrent info is not a dict")
+	}
+
+	// Compute info hash (SHA1 of re-encoded info dict).
+	// Re-encoding from the decoded map produces the same bytes as the original
+	// because our bencode encoder sorts dict keys deterministically.
+	infoEncoded, err := bencode.Encode(infoDict)
+	if err != nil {
+		return fmt.Errorf("encode info dict: %w", err)
+	}
+	sum := sha1.Sum(infoEncoded)
+	hash := hex.EncodeToString(sum[:])
+
+	var desc itemDescriptor
+	if err := json.Unmarshal([]byte(commentStr), &desc); err != nil {
+		return fmt.Errorf("parse descriptor: %w", err)
+	}
+	return h.processDescriptor(desc, hash, savePath)
+}
+
+// processURL fetches the JSON descriptor from a Newznab t=get URL and
+// dispatches to processDescriptor.
 func (h *Handler) processURL(rawURL, savePath string) error {
-	// 2A: SSRF protection — only allow http/https schemes pointing to ?t=get on the Newznab host
+	// SSRF protection — only allow http/https schemes pointing to ?t=get on the Newznab host
 	if err := h.validateDescriptorURL(rawURL); err != nil {
 		return fmt.Errorf("invalid descriptor url: %w", err)
 	}
 
-	// 3D: Use dedicated client with timeout instead of http.Get
 	resp, err := h.descriptorCli.Get(rawURL)
 	if err != nil {
 		return fmt.Errorf("fetch descriptor: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// 2H: Limit response body size to 1 MB
 	body, err := io.ReadAll(io.LimitReader(resp.Body, descriptorMaxBytes))
 	if err != nil {
 		return fmt.Errorf("read descriptor: %w", err)
 	}
 
-	var desc struct {
-		XtreamID     int    `json:"xtream_id"`
-		Type         string `json:"type"`
-		Name         string `json:"name"`
-		Year         string `json:"year"`
-		IMDBId       string `json:"imdb_id"`
-		TVDBId       string `json:"tvdb_id"`
-		TMDBId       string `json:"tmdb_id"`
-		ContainerExt string `json:"container_ext"`
-		Episodes     []struct {
-			EpisodeID  int    `json:"EpisodeID"`
-			Season     int    `json:"Season"`
-			EpisodeNum int    `json:"EpisodeNum"`
-			Title      string `json:"Title"`
-			Ext        string `json:"Ext"`
-		} `json:"episodes"`
-	}
+	var desc itemDescriptor
 	if err := json.Unmarshal(body, &desc); err != nil {
 		return fmt.Errorf("parse descriptor: %w", err)
 	}
@@ -288,6 +358,11 @@ func (h *Handler) processURL(rawURL, savePath string) error {
 	fmt.Fprintf(hf, "%s-%d", desc.Type, desc.XtreamID)
 	hash := fmt.Sprintf("%016x", hf.Sum64())
 
+	return h.processDescriptor(desc, hash, savePath)
+}
+
+// processDescriptor creates a Torrent entry and asynchronously writes .strm files.
+func (h *Handler) processDescriptor(desc itemDescriptor, hash string, savePath string) error {
 	t := &Torrent{
 		Hash:         hash,
 		Name:         desc.Name,
@@ -306,8 +381,13 @@ func (h *Handler) processURL(rawURL, savePath string) error {
 	}
 	h.store.Add(t)
 
-	// Create STRM file(s) asynchronously
 	go func() {
+		if h.xtream == nil || h.writer == nil {
+			slog.Warn("strm write skipped: xtream/writer not configured", "name", desc.Name)
+			h.store.SetComplete(hash, nil)
+			return
+		}
+
 		var strmPaths []string
 		var writeErr error
 

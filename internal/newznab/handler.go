@@ -1,6 +1,8 @@
 package newznab
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/vodarr/vodarr/internal/bencode"
 	"github.com/vodarr/vodarr/internal/index"
 )
 
@@ -263,11 +266,12 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return JSON descriptor — qBit handler will parse this
+	// Build JSON descriptor with a clean name (IPTV prefix stripped).
+	cleanName := stripIPTVPrefix(found.Name)
 	desc := map[string]interface{}{
 		"xtream_id":     found.XtreamID,
 		"type":          string(found.Type),
-		"name":          found.Name,
+		"name":          cleanName,
 		"year":          found.Year,
 		"imdb_id":       found.IMDBId,
 		"tvdb_id":       found.TVDBId,
@@ -276,8 +280,40 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 		"episodes":      episodes,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(desc)
+	descJSON, err := json.Marshal(desc)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// info.name encodes the media type and xtream ID for uniqueness.
+	infoName := fmt.Sprintf("vodarr-%s-%d", found.Type, found.XtreamID)
+	pieces := string(make([]byte, 20)) // 20 zero bytes — valid minimal piece hash
+	infoDict := map[string]interface{}{
+		"length":       1,
+		"name":         infoName,
+		"piece length": 262144,
+		"pieces":       pieces,
+	}
+	torrent := map[string]interface{}{
+		"comment": string(descJSON),
+		"info":    infoDict,
+	}
+
+	torrentBytes, err := bencode.Encode(torrent)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Compute and log the info hash so operators can cross-reference with qBit.
+	infoEncoded, _ := bencode.Encode(infoDict)
+	sum := sha1.Sum(infoEncoded)
+	slog.Debug("t=get torrent", "name", cleanName, "info_hash", hex.EncodeToString(sum[:]))
+
+	w.Header().Set("Content-Type", "application/x-bittorrent")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.torrent"`, infoName))
+	w.Write(torrentBytes)
 }
 
 // categoryRangeMatch returns true if any comma-separated category value in cat

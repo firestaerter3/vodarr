@@ -363,7 +363,7 @@ func episodeToRSS(serverURL string, series *index.Item, ep index.EpisodeItem) It
 		Enclosure: Enclosure{
 			URL:    downloadURL,
 			Length: size,
-			Type:   "application/x-nzb",
+			Type:   "application/x-bittorrent",
 		},
 		Attrs: []Attr{
 			{Name: "category", Value: "5000"},
@@ -422,7 +422,7 @@ func itemToRSS(serverURL string, item *index.Item) Item {
 		Enclosure: Enclosure{
 			URL:    downloadURL,
 			Length: size,
-			Type:   "application/x-nzb",
+			Type:   "application/x-bittorrent",
 		},
 		Attrs: []Attr{
 			{Name: "category", Value: category},

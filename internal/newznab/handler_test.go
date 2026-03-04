@@ -1,12 +1,14 @@
 package newznab
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/vodarr/vodarr/internal/bencode"
 	"github.com/vodarr/vodarr/internal/index"
 )
 
@@ -143,11 +145,47 @@ func TestHandleGet(t *testing.T) {
 	h.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", w.Code)
+		t.Fatalf("status = %d, want 200", w.Code)
 	}
-	body := w.Body.String()
-	if !strings.Contains(body, "xtream_id") {
-		t.Error("t=get response missing xtream_id")
+	ct := w.Header().Get("Content-Type")
+	if ct != "application/x-bittorrent" {
+		t.Errorf("Content-Type = %q, want application/x-bittorrent", ct)
+	}
+
+	// Decode bencode torrent
+	decoded, err := bencode.Decode(w.Body.Bytes())
+	if err != nil {
+		t.Fatalf("bencode decode: %v", err)
+	}
+	torrent, ok := decoded.(map[string]interface{})
+	if !ok {
+		t.Fatalf("decoded not a dict, got %T", decoded)
+	}
+
+	// Extract JSON descriptor from comment field
+	comment, ok := torrent["comment"].(string)
+	if !ok {
+		t.Fatalf("torrent missing comment field")
+	}
+	var desc map[string]interface{}
+	if err := json.Unmarshal([]byte(comment), &desc); err != nil {
+		t.Fatalf("comment JSON unmarshal: %v", err)
+	}
+	if _, ok := desc["xtream_id"]; !ok {
+		t.Error("descriptor missing xtream_id")
+	}
+
+	// Info dict must be present and contain expected fields
+	infoRaw, ok := torrent["info"]
+	if !ok {
+		t.Fatal("torrent missing info dict")
+	}
+	info, ok := infoRaw.(map[string]interface{})
+	if !ok {
+		t.Fatalf("info not a dict, got %T", infoRaw)
+	}
+	if !strings.HasPrefix(info["name"].(string), "vodarr-") {
+		t.Errorf("info.name = %q, want vodarr- prefix", info["name"])
 	}
 }
 

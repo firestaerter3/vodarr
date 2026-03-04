@@ -1,12 +1,16 @@
 package qbit
 
 import (
+	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/vodarr/vodarr/internal/bencode"
 )
 
 // makeQbitHandler builds a Handler with an empty store and no auth.
@@ -140,6 +144,79 @@ func TestSessionTTLEviction(t *testing.T) {
 	h.mu.RUnlock()
 	if stillExists {
 		t.Error("expired session was not evicted from map")
+	}
+}
+
+func TestTorrentsAddTorrentFile(t *testing.T) {
+	// Build a minimal .torrent that matches what handleGet produces.
+	descriptor := map[string]interface{}{
+		"xtream_id":     float64(42), // JSON numbers decode as float64
+		"type":          "movie",
+		"name":          "Test Movie",
+		"year":          "2023",
+		"imdb_id":       "tt9999999",
+		"tvdb_id":       "",
+		"tmdb_id":       "",
+		"container_ext": "mkv",
+		"episodes":      nil,
+	}
+	descJSON, err := json.Marshal(descriptor)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	pieces := string(make([]byte, 20))
+	infoDict := map[string]interface{}{
+		"length":       1,
+		"name":         "vodarr-movie-42",
+		"piece length": 262144,
+		"pieces":       pieces,
+	}
+	torrent := map[string]interface{}{
+		"comment": string(descJSON),
+		"info":    infoDict,
+	}
+	torrentBytes, err := bencode.Encode(torrent)
+	if err != nil {
+		t.Fatalf("bencode.Encode: %v", err)
+	}
+
+	// Build multipart form with the .torrent file in the "torrents" field.
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("torrents", "vodarr-movie-42.torrent")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	fw.Write(torrentBytes)
+	mw.Close()
+
+	h := makeQbitHandler("/data/strm")
+	req := httptest.NewRequest("POST", "/api/v2/torrents/add", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if w.Body.String() != "Ok." {
+		t.Errorf("body = %q, want Ok.", w.Body.String())
+	}
+
+	// Torrent must appear in the store with the correct SHA1 info hash.
+	torrents := h.store.All()
+	if len(torrents) != 1 {
+		t.Fatalf("store has %d torrents, want 1", len(torrents))
+	}
+
+	// Verify the hash is a 40-character hex string (SHA1)
+	hash := torrents[0].Hash
+	if len(hash) != 40 {
+		t.Errorf("hash = %q (len %d), want 40-char SHA1 hex", hash, len(hash))
+	}
+	if torrents[0].Name != "Test Movie" {
+		t.Errorf("Name = %q, want Test Movie", torrents[0].Name)
 	}
 }
 
