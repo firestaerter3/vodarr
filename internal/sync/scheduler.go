@@ -544,24 +544,30 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 				}
 
 				// Reuse cached IDs for unchanged items to avoid redundant TMDB calls.
-				// Require CanonicalName to be set so items that were cached before
-				// the canonical-name feature was introduced get re-enriched once.
+				// Always copy IDs from cache to preserve them even if a fresh title
+				// search later fails. Skip enrichment only when CanonicalName is
+				// also set — items cached before that feature get re-enriched once.
 				if cachedByKey != nil {
 					key := fmt.Sprintf("%s:%d", item.Type, item.XtreamID)
 					if ci, ok := cachedByKey[key]; ok && ci.Name == item.Name {
-						if (ci.IMDBId != "" || ci.TVDBId != "") && ci.CanonicalName != "" {
+						if ci.IMDBId != "" || ci.TVDBId != "" {
 							item.IMDBId = ci.IMDBId
 							item.TVDBId = ci.TVDBId
 							item.TMDBId = ci.TMDBId
 							item.CanonicalName = ci.CanonicalName
-							n := atomic.AddInt64(&progressN, 1)
-							s.setProgress("Enriching via TMDB", int(n), total)
-							continue
+							if ci.CanonicalName != "" {
+								n := atomic.AddInt64(&progressN, 1)
+								s.setProgress("Enriching via TMDB", int(n), total)
+								continue
+							}
+							// CanonicalName empty: fall through to fetch it.
 						}
 					}
 				}
 
-				if item.TMDBId == "" {
+				// Fetch canonical name via TMDB when missing.
+				// Also runs for brand-new items with no TMDBId yet.
+				if item.TMDBId == "" || item.CanonicalName == "" {
 					if err := s.resolveByTitle(ctx, item); err != nil {
 						slog.Debug("title resolve failed", "name", item.Name, "error", err)
 					}
