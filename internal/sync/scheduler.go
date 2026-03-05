@@ -565,9 +565,11 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 					}
 				}
 
-				// Fetch canonical name via TMDB when missing.
-				// Also runs for brand-new items with no TMDBId yet.
-				if item.TMDBId == "" || item.CanonicalName == "" {
+				// Title search: only for items with no TMDBId yet (new items or
+				// those the provider never tagged). Never call resolveByTitle when
+				// we already have a TMDBId — a title search could overwrite a
+				// correct provider-supplied ID with a wrong match.
+				if item.TMDBId == "" {
 					if err := s.resolveByTitle(ctx, item); err != nil {
 						slog.Debug("title resolve failed", "name", item.Name, "error", err)
 					}
@@ -594,6 +596,24 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 							}
 							if extIDs.TVDBID > 0 {
 								item.TVDBId = strconv.Itoa(extIDs.TVDBID)
+							}
+						}
+
+						// Fetch CanonicalName by ID when still missing (provider supplied
+						// TMDBId directly without a title search, e.g. Dutch VOD streams).
+						if item.CanonicalName == "" {
+							var canonTitle string
+							var titleErr error
+							switch item.Type {
+							case index.TypeMovie:
+								canonTitle, titleErr = s.tmdb.GetMovieTitle(ctx, tmdbID)
+							case index.TypeSeries:
+								canonTitle, titleErr = s.tmdb.GetTVTitle(ctx, tmdbID)
+							}
+							if titleErr != nil {
+								slog.Debug("canonical name fetch failed", "tmdb_id", tmdbID, "error", titleErr)
+							} else if canonTitle != "" {
+								item.CanonicalName = canonTitle
 							}
 						}
 					}
