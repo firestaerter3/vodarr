@@ -565,6 +565,10 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 					}
 				}
 
+				// Save the provider-supplied TMDBId before any title search so we
+				// can detect later when a provider ID failed to yield an IMDB match.
+				providerTMDBId := item.TMDBId
+
 				// Title search: only for items with no TMDBId yet (new items or
 				// those the provider never tagged). Never call resolveByTitle when
 				// we already have a TMDBId — a title search could overwrite a
@@ -619,6 +623,45 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 					}
 				}
 
+				// Fallback: provider-supplied TMDBId yielded no IMDB/TVDB ID (the
+				// provider ID may be wrong or stale). Clear it and try a title
+				// search instead, then re-fetch external IDs with the new ID.
+				if item.IMDBId == "" && providerTMDBId != "" {
+					slog.Debug("provider TMDBId yielded no IMDB ID, retrying via title search", "name", item.Name, "provider_tmdb_id", providerTMDBId)
+					item.TMDBId = ""
+					item.CanonicalName = ""
+					if err := s.resolveByTitle(ctx, item); err != nil {
+						slog.Debug("title fallback failed", "name", item.Name, "error", err)
+					}
+					if item.TMDBId != "" {
+						// Title search found a (hopefully correct) ID — fetch external IDs.
+						tmdbID, err := strconv.Atoi(item.TMDBId)
+						if err == nil && tmdbID > 0 {
+							var extIDs *tmdb.ExternalIDs
+							switch item.Type {
+							case index.TypeMovie:
+								extIDs, err = s.tmdb.GetMovieExternalIDs(ctx, tmdbID)
+							case index.TypeSeries:
+								extIDs, err = s.tmdb.GetTVExternalIDs(ctx, tmdbID)
+							}
+							if err != nil {
+								slog.Debug("external ids fallback lookup failed", "tmdb_id", tmdbID, "error", err)
+							} else if extIDs != nil {
+								if extIDs.IMDBID != "" {
+									item.IMDBId = extIDs.IMDBID
+								}
+								if extIDs.TVDBID > 0 {
+									item.TVDBId = strconv.Itoa(extIDs.TVDBID)
+								}
+							}
+						}
+					} else {
+						// Title search found nothing — restore provider ID so the
+						// item is still traceable and won't retry on every sync.
+						item.TMDBId = providerTMDBId
+					}
+				}
+
 				// TVDB fallback: any series without a TVDB ID is searched
 				// directly on TVDB by title — covers both the case where
 				// TMDB had no TVDB cross-link and the case where TMDB
@@ -666,6 +709,13 @@ func (s *Scheduler) resolveByTitle(ctx context.Context, item *index.Item) error 
 		if err != nil {
 			return err
 		}
+		// Year-retry: provider year may be off by 1; retry without year constraint.
+		if result == nil && year > 0 {
+			result, err = s.tmdb.SearchMovie(ctx, title, 0)
+			if err != nil {
+				return err
+			}
+		}
 		if result != nil {
 			item.TMDBId = strconv.Itoa(result.ID)
 			if result.Title != "" {
@@ -676,6 +726,13 @@ func (s *Scheduler) resolveByTitle(ctx context.Context, item *index.Item) error 
 		result, err := s.tmdb.SearchTV(ctx, title, year)
 		if err != nil {
 			return err
+		}
+		// Year-retry: provider year may be off by 1; retry without year constraint.
+		if result == nil && year > 0 {
+			result, err = s.tmdb.SearchTV(ctx, title, 0)
+			if err != nil {
+				return err
+			}
 		}
 		if result != nil {
 			item.TMDBId = strconv.Itoa(result.ID)
