@@ -1,6 +1,7 @@
 package qbit
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha1"
 	"crypto/subtle"
@@ -19,9 +20,16 @@ import (
 	"time"
 
 	"github.com/vodarr/vodarr/internal/bencode"
+	"github.com/vodarr/vodarr/internal/probe"
 	"github.com/vodarr/vodarr/internal/strm"
 	"github.com/vodarr/vodarr/internal/xtream"
 )
+
+// Prober extracts media metadata from a stream URL.
+// It is satisfied by probe.DefaultProber and can be replaced in tests.
+type Prober interface {
+	Probe(ctx context.Context, url string) (*probe.MediaInfo, error)
+}
 
 // itemDescriptor is the JSON structure embedded in both the Newznab JSON
 // response (legacy URL path) and the torrent comment field (Torznab path).
@@ -50,18 +58,19 @@ type Handler struct {
 	store         *Store
 	writer        *strm.Writer
 	xtream        *xtream.Client
+	prober        Prober              // probes stream URLs for media metadata
 	savePath      string
 	username      string // 2D: optional credentials; empty = no auth
 	password      string
 	newznabHost   string // expected host:port of the Newznab server; validated in processURL
 	mu            sync.RWMutex
 	sessions      map[string]time.Time // sid → last-used time
-	categories    map[string]string   // name → savePath; populated by createCategory
+	categories    map[string]string    // name → savePath; populated by createCategory
 	descriptorCli *http.Client        // 2A+3D: dedicated client for descriptor fetches
 	mux           *http.ServeMux
 }
 
-func NewHandler(store *Store, writer *strm.Writer, xc *xtream.Client, savePath, username, password, newznabURL string) *Handler {
+func NewHandler(store *Store, writer *strm.Writer, xc *xtream.Client, pr Prober, savePath, username, password, newznabURL string) *Handler {
 	newznabHost := ""
 	if u, err := url.Parse(newznabURL); err == nil {
 		newznabHost = u.Host
@@ -70,6 +79,7 @@ func NewHandler(store *Store, writer *strm.Writer, xc *xtream.Client, savePath, 
 		store:       store,
 		writer:      writer,
 		xtream:      xc,
+		prober:      pr,
 		savePath:    savePath,
 		username:    username,
 		password:    password,
@@ -392,6 +402,8 @@ func (h *Handler) processDescriptor(desc itemDescriptor, hash string, savePath, 
 			return
 		}
 
+		ctx := context.Background()
+
 		var strmPaths, mkvPaths []string
 		var writeErr error
 
@@ -403,7 +415,15 @@ func (h *Handler) processDescriptor(desc itemDescriptor, hash string, savePath, 
 		switch desc.Type {
 		case "movie":
 			streamURL := h.xtream.StreamURL(desc.XtreamID, ext)
-			result, err := h.writer.WriteMovie(desc.Name, desc.Year, streamURL)
+			var info *probe.MediaInfo
+			if h.prober != nil {
+				var probeErr error
+				info, probeErr = h.prober.Probe(ctx, streamURL)
+				if probeErr != nil {
+					slog.Warn("probe failed, mkv stub will lack metadata", "name", desc.Name, "error", probeErr)
+				}
+			}
+			result, err := h.writer.WriteMovie(desc.Name, desc.Year, streamURL, info)
 			if err != nil {
 				writeErr = err
 			} else {
@@ -412,13 +432,31 @@ func (h *Handler) processDescriptor(desc itemDescriptor, hash string, savePath, 
 			}
 
 		case "series":
-			for _, ep := range desc.Episodes {
+			// Probe only the first episode; all episodes of the same series
+			// typically share codec/resolution so we reuse the result.
+			var seriesInfo *probe.MediaInfo
+			for i, ep := range desc.Episodes {
 				epExt := ep.Ext
 				if epExt == "" {
 					epExt = "mkv"
 				}
 				streamURL := h.xtream.SeriesStreamURL(ep.EpisodeID, epExt)
-				result, err := h.writer.WriteEpisode(desc.Name, ep.Season, ep.EpisodeNum, ep.Title, streamURL)
+				if i == 0 && h.prober != nil {
+					var probeErr error
+					seriesInfo, probeErr = h.prober.Probe(ctx, streamURL)
+					if probeErr != nil {
+						slog.Warn("probe failed for series", "name", desc.Name, "error", probeErr)
+					}
+				}
+				// Per-episode info: reuse series info but zero duration so
+				// each episode doesn't inherit the first episode's duration.
+				var epInfo *probe.MediaInfo
+				if seriesInfo != nil {
+					cp := *seriesInfo
+					cp.Duration = 0
+					epInfo = &cp
+				}
+				result, err := h.writer.WriteEpisode(desc.Name, ep.Season, ep.EpisodeNum, ep.Title, streamURL, epInfo)
 				if err != nil {
 					slog.Warn("strm write episode failed", "error", err)
 					continue

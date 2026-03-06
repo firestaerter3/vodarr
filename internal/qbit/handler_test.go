@@ -15,10 +15,10 @@ import (
 )
 
 // makeQbitHandler builds a Handler with an empty store and no auth.
-// The writer and xtream fields are nil; only call endpoints that don't need them.
+// The writer, xtream, and prober fields are nil; only call endpoints that don't need them.
 func makeQbitHandler(savePath string) *Handler {
 	store := NewStore()
-	return NewHandler(store, nil, nil, savePath, "", "", "")
+	return NewHandler(store, nil, nil, nil, savePath, "", "", "")
 }
 
 func TestTorrentsFilesRelativePaths(t *testing.T) {

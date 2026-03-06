@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"github.com/vodarr/vodarr/internal/probe"
 )
 
 // Writer creates .strm files in the configured output directory.
@@ -27,12 +29,13 @@ func NewWriter(outputPath, moviesDir, seriesDir string) *Writer {
 // WriteResult holds paths to both files created for one media item.
 type WriteResult struct {
 	StrmPath string // .strm file containing the stream URL (for Plex/Emby)
-	MkvPath  string // empty companion .mkv stub (for Sonarr/Radarr import filter)
+	MkvPath  string // companion .mkv stub (for Sonarr/Radarr import filter)
 }
 
 // WriteMovie creates a .strm file and companion .mkv stub for a movie.
 // Path: {output}/{movies}/{Movie Name (Year)}/{Movie.Name.Year.WEB-DL.strm}
-func (w *Writer) WriteMovie(name, year, streamURL string) (WriteResult, error) {
+// info is optional; if non-nil its metadata is embedded in the .mkv header.
+func (w *Writer) WriteMovie(name, year, streamURL string, info *probe.MediaInfo) (WriteResult, error) {
 	folderName := folderSafe(name)
 	if year != "" {
 		folderName = fmt.Sprintf("%s (%s)", folderName, year)
@@ -46,12 +49,13 @@ func (w *Writer) WriteMovie(name, year, streamURL string) (WriteResult, error) {
 	}
 
 	dir := filepath.Join(w.outputPath, w.moviesDir, folderName)
-	return w.write(dir, filename, streamURL)
+	return w.write(dir, filename, streamURL, info)
 }
 
 // WriteEpisode creates a .strm file and companion .mkv stub for a single TV episode.
 // Path: {output}/{tv}/{Series Name}/Season {N}/{Series.Name.S01E01.Title.WEB-DL.strm}
-func (w *Writer) WriteEpisode(seriesName string, season, episode int, title, streamURL string) (WriteResult, error) {
+// info is optional; if non-nil its metadata is embedded in the .mkv header.
+func (w *Writer) WriteEpisode(seriesName string, season, episode int, title, streamURL string, info *probe.MediaInfo) (WriteResult, error) {
 	seasonDir := fmt.Sprintf("Season %02d", season)
 	dir := filepath.Join(w.outputPath, w.seriesDir, folderSafe(seriesName), seasonDir)
 
@@ -62,10 +66,10 @@ func (w *Writer) WriteEpisode(seriesName string, season, episode int, title, str
 	}
 	filename += ".WEB-DL.strm"
 
-	return w.write(dir, filename, streamURL)
+	return w.write(dir, filename, streamURL, info)
 }
 
-func (w *Writer) write(dir, filename, content string) (WriteResult, error) {
+func (w *Writer) write(dir, filename, content string, info *probe.MediaInfo) (WriteResult, error) {
 	// 2B: Verify the resolved path is still under the output directory
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
@@ -88,13 +92,19 @@ func (w *Writer) write(dir, filename, content string) (WriteResult, error) {
 		return WriteResult{}, fmt.Errorf("write strm %s: %w", strmPath, err)
 	}
 
-	// Companion .mkv stub: sparse file with 500 MB logical size so Sonarr/Radarr's
-	// sample-detection threshold is satisfied (minSize * runtime check).
-	// Physical disk usage is ~0 bytes on ext4/xfs. The import script replaces it.
+	// Companion .mkv stub: valid EBML/Matroska header followed by sparse padding to
+	// 500 MB logical size so Sonarr/Radarr's sample-detection threshold is satisfied.
+	// Physical disk usage is ~0 bytes on ext4/xfs (sparse file).
+	// When info is non-nil, the header encodes real codec/resolution/duration so that
+	// ffprobe and arr applications see accurate media info without the ffprobe wrapper.
 	mkvPath := strings.TrimSuffix(strmPath, ".strm") + ".mkv"
 	mkvFile, err := os.OpenFile(mkvPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return WriteResult{}, fmt.Errorf("create mkv stub %s: %w", mkvPath, err)
+	}
+	if _, err := mkvFile.Write(BuildMKVHeader(info)); err != nil {
+		mkvFile.Close()
+		return WriteResult{}, fmt.Errorf("write mkv header %s: %w", mkvPath, err)
 	}
 	if err := mkvFile.Truncate(500 * 1024 * 1024); err != nil {
 		mkvFile.Close()
