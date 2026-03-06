@@ -645,9 +645,8 @@ func (h *Handler) handleTorrentsDelete(w http.ResponseWriter, r *http.Request) {
 				}
 				slog.Info("torrent deleted by client", "hash", shortHash, "name", t.Name, "state", t.State, "deleteFiles", deleteFiles)
 				if deleteFiles {
-					for _, p := range t.StrmPaths {
-						os.Remove(p)
-					}
+					// Only delete .mkv stubs — .strm files are permanent streaming
+					// content that library symlinks point to; never delete them.
 					for _, p := range t.MkvPaths {
 						os.Remove(p)
 					}

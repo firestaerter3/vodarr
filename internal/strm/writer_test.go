@@ -49,9 +49,13 @@ func TestWriteMovie(t *testing.T) {
 	if _, err := os.Stat(result.MkvPath); err != nil {
 		t.Errorf("companion .mkv does not exist: %v", err)
 	}
-	mkvContent, _ := os.ReadFile(result.MkvPath)
-	if len(mkvContent) == 0 {
-		t.Errorf("companion .mkv should have stub content, got 0 bytes")
+	mkvInfo, err := os.Stat(result.MkvPath)
+	if err != nil {
+		t.Fatalf("Stat mkv: %v", err)
+	}
+	const wantSize = 500 * 1024 * 1024
+	if mkvInfo.Size() != wantSize {
+		t.Errorf("companion .mkv logical size = %d, want %d (sparse file)", mkvInfo.Size(), wantSize)
 	}
 }
 

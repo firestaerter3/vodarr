@@ -88,13 +88,20 @@ func (w *Writer) write(dir, filename, content string) (WriteResult, error) {
 		return WriteResult{}, fmt.Errorf("write strm %s: %w", strmPath, err)
 	}
 
-	// Companion .mkv stub: minimal content so Sonarr/Radarr's extension filter AND
-	// file-size checks pass. The stub is not a valid MKV; the import script replaces
-	// it with a symlink to the real .strm file. 150 KB avoids the ~64 KB sample floor.
+	// Companion .mkv stub: sparse file with 500 MB logical size so Sonarr/Radarr's
+	// sample-detection threshold is satisfied (minSize * runtime check).
+	// Physical disk usage is ~0 bytes on ext4/xfs. The import script replaces it.
 	mkvPath := strings.TrimSuffix(strmPath, ".strm") + ".mkv"
-	stub := make([]byte, 150*1024)
-	if err := os.WriteFile(mkvPath, stub, 0644); err != nil {
-		return WriteResult{}, fmt.Errorf("write mkv stub %s: %w", mkvPath, err)
+	mkvFile, err := os.OpenFile(mkvPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return WriteResult{}, fmt.Errorf("create mkv stub %s: %w", mkvPath, err)
+	}
+	if err := mkvFile.Truncate(500 * 1024 * 1024); err != nil {
+		mkvFile.Close()
+		return WriteResult{}, fmt.Errorf("truncate mkv stub %s: %w", mkvPath, err)
+	}
+	if err := mkvFile.Close(); err != nil {
+		return WriteResult{}, fmt.Errorf("close mkv stub %s: %w", mkvPath, err)
 	}
 
 	return WriteResult{StrmPath: strmPath, MkvPath: mkvPath}, nil
