@@ -25,8 +25,11 @@ type Torrent struct {
 	AddedOn      int64
 	CompletionOn int64
 
-	// VODarr-specific: path to the created .strm file(s)
+	// VODarr-specific: paths to the created files.
+	// StrmPaths holds the .strm files (stream URL content, for Plex/Emby).
+	// MkvPaths holds the companion empty .mkv stubs (for Sonarr/Radarr import filter).
 	StrmPaths []string
+	MkvPaths  []string
 
 	// Descriptor from the Newznab /api?t=get response
 	XtreamID  int
@@ -84,8 +87,8 @@ func (s *Store) Delete(hash string) {
 	delete(s.torrents, hash)
 }
 
-// SetComplete marks a torrent as done and records its strm path.
-func (s *Store) SetComplete(hash string, strmPaths []string) {
+// SetComplete marks a torrent as done and records its strm and mkv paths.
+func (s *Store) SetComplete(hash string, strmPaths, mkvPaths []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t, ok := s.torrents[hash]
@@ -96,4 +99,5 @@ func (s *Store) SetComplete(hash string, strmPaths []string) {
 	t.Progress = 1.0
 	t.CompletionOn = time.Now().Unix()
 	t.StrmPaths = strmPaths
+	t.MkvPaths = mkvPaths
 }

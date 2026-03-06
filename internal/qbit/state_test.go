@@ -17,7 +17,7 @@ func TestTorrentStateLifecycle(t *testing.T) {
 		t.Errorf("initial progress = %f, want 0", got.Progress)
 	}
 
-	s.SetComplete("h1", []string{"/data/strm/movies/Test Movie/Test.Movie.strm"})
+	s.SetComplete("h1", []string{"/data/strm/movies/Test Movie/Test.Movie.strm"}, []string{"/data/strm/movies/Test Movie/Test.Movie.mkv"})
 	got = s.Get("h1")
 	if got.State != StatePausedUP {
 		t.Errorf("completed state = %q, want pausedUP", got.State)
@@ -79,6 +79,24 @@ func TestContentPathForTorrent(t *testing.T) {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	})
+
+	t.Run("mkv paths take precedence over strm paths", func(t *testing.T) {
+		tor := &Torrent{
+			SavePath: savePath,
+			StrmPaths: []string{
+				"/data/strm/tv/Test/Season 01/Test.S01E01.strm",
+			},
+			MkvPaths: []string{
+				"/data/strm/tv/Test/Season 01/Test.S01E01.mkv",
+			},
+		}
+		got := contentPathForTorrent(tor)
+		// MkvPaths has one entry — should return that file path directly
+		want := "/data/strm/tv/Test/Season 01/Test.S01E01.mkv"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
 }
 
 func TestStore(t *testing.T) {
@@ -107,7 +125,9 @@ func TestStore(t *testing.T) {
 
 	t.Run("set complete", func(t *testing.T) {
 		s.Add(&Torrent{Hash: "def456", Name: "A Series", State: StateUploading, Progress: 0})
-		s.SetComplete("def456", []string{"/data/strm/tv/A Series/Season 01/A.Series.S01E01.strm"})
+		s.SetComplete("def456",
+			[]string{"/data/strm/tv/A Series/Season 01/A.Series.S01E01.strm"},
+			[]string{"/data/strm/tv/A Series/Season 01/A.Series.S01E01.mkv"})
 
 		got := s.Get("def456")
 		if got.State != StatePausedUP {
@@ -118,6 +138,9 @@ func TestStore(t *testing.T) {
 		}
 		if len(got.StrmPaths) != 1 {
 			t.Errorf("strm paths = %d, want 1", len(got.StrmPaths))
+		}
+		if len(got.MkvPaths) != 1 {
+			t.Errorf("mkv paths = %d, want 1", len(got.MkvPaths))
 		}
 	})
 

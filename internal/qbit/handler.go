@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -384,11 +385,11 @@ func (h *Handler) processDescriptor(desc itemDescriptor, hash string, savePath s
 	go func() {
 		if h.xtream == nil || h.writer == nil {
 			slog.Warn("strm write skipped: xtream/writer not configured", "name", desc.Name)
-			h.store.SetComplete(hash, nil)
+			h.store.SetComplete(hash, nil, nil)
 			return
 		}
 
-		var strmPaths []string
+		var strmPaths, mkvPaths []string
 		var writeErr error
 
 		ext := desc.ContainerExt
@@ -399,11 +400,12 @@ func (h *Handler) processDescriptor(desc itemDescriptor, hash string, savePath s
 		switch desc.Type {
 		case "movie":
 			streamURL := h.xtream.StreamURL(desc.XtreamID, ext)
-			path, err := h.writer.WriteMovie(desc.Name, desc.Year, streamURL)
+			result, err := h.writer.WriteMovie(desc.Name, desc.Year, streamURL)
 			if err != nil {
 				writeErr = err
 			} else {
-				strmPaths = append(strmPaths, path)
+				strmPaths = append(strmPaths, result.StrmPath)
+				mkvPaths = append(mkvPaths, result.MkvPath)
 			}
 
 		case "series":
@@ -413,12 +415,13 @@ func (h *Handler) processDescriptor(desc itemDescriptor, hash string, savePath s
 					epExt = "mkv"
 				}
 				streamURL := h.xtream.SeriesStreamURL(ep.EpisodeID, epExt)
-				path, err := h.writer.WriteEpisode(desc.Name, ep.Season, ep.EpisodeNum, ep.Title, streamURL)
+				result, err := h.writer.WriteEpisode(desc.Name, ep.Season, ep.EpisodeNum, ep.Title, streamURL)
 				if err != nil {
 					slog.Warn("strm write episode failed", "error", err)
 					continue
 				}
-				strmPaths = append(strmPaths, path)
+				strmPaths = append(strmPaths, result.StrmPath)
+				mkvPaths = append(mkvPaths, result.MkvPath)
 			}
 		}
 
@@ -426,7 +429,7 @@ func (h *Handler) processDescriptor(desc itemDescriptor, hash string, savePath s
 			slog.Error("strm write failed", "name", desc.Name, "error", writeErr)
 		}
 
-		h.store.SetComplete(hash, strmPaths)
+		h.store.SetComplete(hash, strmPaths, mkvPaths)
 		slog.Info("strm created", "name", desc.Name, "type", desc.Type, "files", len(strmPaths))
 	}()
 
@@ -588,8 +591,13 @@ func (h *Handler) handleTorrentsFiles(w http.ResponseWriter, r *http.Request) {
 		Availability float64 `json:"availability"`
 	}
 
+	// Report .mkv paths so Sonarr/Radarr's video-extension filter passes.
+	paths := t.MkvPaths
+	if len(paths) == 0 {
+		paths = t.StrmPaths // fallback if only strm paths are set (legacy)
+	}
 	var files []fileEntry
-	for i, p := range t.StrmPaths {
+	for i, p := range paths {
 		name := p
 		if rel, err := filepath.Rel(t.SavePath, p); err == nil {
 			name = rel
@@ -606,10 +614,10 @@ func (h *Handler) handleTorrentsFiles(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if len(files) == 0 {
-		// Fallback before strm is written
+		// Fallback before files are written
 		files = append(files, fileEntry{
 			Index:        0,
-			Name:         t.Name + ".strm",
+			Name:         t.Name + ".mkv",
 			Size:         64,
 			Progress:     1.0,
 			Priority:     1,
@@ -635,6 +643,14 @@ func (h *Handler) handleTorrentsDelete(w http.ResponseWriter, r *http.Request) {
 					shortHash = hash[:8]
 				}
 				slog.Info("torrent deleted by client", "hash", shortHash, "name", t.Name, "state", t.State, "deleteFiles", deleteFiles)
+				if deleteFiles {
+					for _, p := range t.StrmPaths {
+						os.Remove(p)
+					}
+					for _, p := range t.MkvPaths {
+						os.Remove(p)
+					}
+				}
 			} else {
 				shortHash := hash
 				if len(hash) > 8 {
@@ -723,19 +739,25 @@ func (h *Handler) writeJSON(w http.ResponseWriter, v interface{}) {
 }
 
 // contentPathForTorrent returns the appropriate content_path for Sonarr/Radarr.
+// Uses MkvPaths (companion stubs) so Sonarr/Radarr's video-extension filter passes.
 // For movies (single file) it returns the file path directly.
 // For series (multiple files) it returns the common parent directory so that
 // Sonarr can scan and import all episodes, not just the first one.
 func contentPathForTorrent(t *Torrent) string {
-	if len(t.StrmPaths) == 0 {
+	// Prefer .mkv paths; fall back to .strm paths if mkv not yet populated.
+	paths := t.MkvPaths
+	if len(paths) == 0 {
+		paths = t.StrmPaths
+	}
+	if len(paths) == 0 {
 		return t.SavePath
 	}
-	if len(t.StrmPaths) == 1 {
-		return t.StrmPaths[0]
+	if len(paths) == 1 {
+		return paths[0]
 	}
 	// Walk up from the first file's directory until all paths are beneath it.
-	dir := filepath.Dir(t.StrmPaths[0])
-	for _, p := range t.StrmPaths[1:] {
+	dir := filepath.Dir(paths[0])
+	for _, p := range paths[1:] {
 		for dir != t.SavePath && dir != "/" && dir != "." {
 			if strings.HasPrefix(p, dir+string(filepath.Separator)) {
 				break
