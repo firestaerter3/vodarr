@@ -233,6 +233,7 @@ func (h *Handler) handleTorrentsAdd(w http.ResponseWriter, r *http.Request) {
 	if savePath == "" {
 		savePath = h.savePath
 	}
+	category := r.FormValue("category")
 
 	// Torznab path: Sonarr/Radarr upload the .torrent file directly.
 	if r.MultipartForm != nil && len(r.MultipartForm.File["torrents"]) > 0 {
@@ -250,7 +251,7 @@ func (h *Handler) handleTorrentsAdd(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Fails.", http.StatusInternalServerError)
 				return
 			}
-			if err := h.processTorrentFile(data, savePath); err != nil {
+			if err := h.processTorrentFile(data, savePath, category); err != nil {
 				slog.Error("torrents/add: torrent file processing failed", "error", err)
 				http.Error(w, "Fails.", http.StatusInternalServerError)
 				return
@@ -276,7 +277,7 @@ func (h *Handler) handleTorrentsAdd(w http.ResponseWriter, r *http.Request) {
 		if rawURL == "" {
 			continue
 		}
-		if err := h.processURL(rawURL, savePath); err != nil {
+		if err := h.processURL(rawURL, savePath, category); err != nil {
 			slog.Error("torrents/add: processing failed", "url", rawURL, "error", err)
 			http.Error(w, "Fails.", http.StatusInternalServerError)
 			return
@@ -293,7 +294,7 @@ const descriptorMaxBytes = 1 << 20 // 1 MB
 // descriptor from the comment field, and dispatches to processDescriptor.
 // The info hash (SHA1 of bencoded info dict) is used as the tracking hash so
 // that Sonarr/Radarr can find the torrent by the hash they computed locally.
-func (h *Handler) processTorrentFile(data []byte, savePath string) error {
+func (h *Handler) processTorrentFile(data []byte, savePath, category string) error {
 	decoded, err := bencode.Decode(data)
 	if err != nil {
 		return fmt.Errorf("decode torrent: %w", err)
@@ -329,12 +330,12 @@ func (h *Handler) processTorrentFile(data []byte, savePath string) error {
 	if err := json.Unmarshal([]byte(commentStr), &desc); err != nil {
 		return fmt.Errorf("parse descriptor: %w", err)
 	}
-	return h.processDescriptor(desc, hash, savePath)
+	return h.processDescriptor(desc, hash, savePath, category)
 }
 
 // processURL fetches the JSON descriptor from a Newznab t=get URL and
 // dispatches to processDescriptor.
-func (h *Handler) processURL(rawURL, savePath string) error {
+func (h *Handler) processURL(rawURL, savePath, category string) error {
 	// SSRF protection — only allow http/https schemes pointing to ?t=get on the Newznab host
 	if err := h.validateDescriptorURL(rawURL); err != nil {
 		return fmt.Errorf("invalid descriptor url: %w", err)
@@ -360,15 +361,16 @@ func (h *Handler) processURL(rawURL, savePath string) error {
 	fmt.Fprintf(hf, "%s-%d", desc.Type, desc.XtreamID)
 	hash := fmt.Sprintf("%016x", hf.Sum64())
 
-	return h.processDescriptor(desc, hash, savePath)
+	return h.processDescriptor(desc, hash, savePath, category)
 }
 
 // processDescriptor creates a Torrent entry and asynchronously writes .strm files.
-func (h *Handler) processDescriptor(desc itemDescriptor, hash string, savePath string) error {
+func (h *Handler) processDescriptor(desc itemDescriptor, hash string, savePath, category string) error {
 	t := &Torrent{
 		Hash:         hash,
 		Name:         desc.Name,
 		SavePath:     savePath,
+		Category:     category,
 		State:        StateDownloading,
 		Progress:     0,
 		Size:         1024 * 1024 * 1024,
@@ -505,6 +507,10 @@ func (h *Handler) handleTorrentsInfo(w http.ResponseWriter, r *http.Request) {
 		if filterHash != "" && filterHash != "all" && !strings.Contains(filterHash, t.Hash) {
 			continue
 		}
+		downloaded := int64(0)
+		if t.Progress >= 1.0 {
+			downloaded = t.Size
+		}
 		out = append(out, qbTorrent{
 			Hash:         t.Hash,
 			Name:         t.Name,
@@ -512,12 +518,14 @@ func (h *Handler) handleTorrentsInfo(w http.ResponseWriter, r *http.Request) {
 			TotalSize:    t.Size,
 			Progress:     t.Progress,
 			State:        t.State,
+			Category:     t.Category,
 			SavePath:     t.SavePath,
 			ContentPath:  contentPathForTorrent(t),
 			AddedOn:      t.AddedOn,
 			CompletionOn: t.CompletionOn,
 			Ratio:        1.0,
 			Eta:          0,
+			Downloaded:   downloaded,
 			AmountLeft:   int64((1.0 - t.Progress) * float64(t.Size)),
 		})
 	}

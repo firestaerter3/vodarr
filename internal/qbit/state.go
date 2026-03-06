@@ -19,6 +19,7 @@ type Torrent struct {
 	Hash         string
 	Name         string
 	SavePath     string
+	Category     string
 	State        TorrentState
 	Progress     float64
 	Size         int64

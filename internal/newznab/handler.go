@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/vodarr/vodarr/internal/bencode"
 	"github.com/vodarr/vodarr/internal/index"
@@ -291,9 +292,12 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 	// same xtream ID, so without it every episode would produce the same info hash.
 	// Sonarr tracks downloads by hash, so a collision causes all but one episode
 	// to be silently dropped.
-	infoName := fmt.Sprintf("vodarr-%s-%d", found.Type, found.XtreamID)
+	// A nanosecond nonce ensures each grab produces a unique info hash, so
+	// re-grabs never collide with DownloadHistory records from prior imports.
+	nonce := time.Now().UnixNano()
+	infoName := fmt.Sprintf("vodarr-%s-%d-%d", found.Type, found.XtreamID, nonce)
 	if episodeID > 0 {
-		infoName = fmt.Sprintf("vodarr-%s-%d-%d", found.Type, found.XtreamID, episodeID)
+		infoName = fmt.Sprintf("vodarr-%s-%d-%d-%d", found.Type, found.XtreamID, episodeID, nonce)
 	}
 	pieces := string(make([]byte, 20)) // 20 zero bytes — valid minimal piece hash
 	infoDict := map[string]interface{}{
