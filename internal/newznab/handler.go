@@ -286,8 +286,15 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// info.name encodes the media type and xtream ID for uniqueness.
+	// info.name encodes the media type, xtream ID, and episode ID for uniqueness.
+	// Including episode_id is critical: all episodes of the same series share the
+	// same xtream ID, so without it every episode would produce the same info hash.
+	// Sonarr tracks downloads by hash, so a collision causes all but one episode
+	// to be silently dropped.
 	infoName := fmt.Sprintf("vodarr-%s-%d", found.Type, found.XtreamID)
+	if episodeID > 0 {
+		infoName = fmt.Sprintf("vodarr-%s-%d-%d", found.Type, found.XtreamID, episodeID)
+	}
 	pieces := string(make([]byte, 20)) // 20 zero bytes — valid minimal piece hash
 	infoDict := map[string]interface{}{
 		"length":       1,

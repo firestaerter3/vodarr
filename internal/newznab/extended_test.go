@@ -1,12 +1,14 @@
 package newznab
 
 import (
+	"crypto/sha1"
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/vodarr/vodarr/internal/bencode"
 	"github.com/vodarr/vodarr/internal/index"
 )
 
@@ -231,6 +233,45 @@ func TestHandleGetSingleEpisodeByID(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "102") {
 		t.Errorf("expected episode_id 102 in response body: %s", body)
+	}
+}
+
+// TestHandleGetEpisodeHashUniqueness verifies that different episode_ids of the
+// same series produce different torrent info hashes. This is critical: Sonarr
+// tracks downloads by hash, so a collision would cause all but one episode to
+// be silently dropped.
+func TestHandleGetEpisodeHashUniqueness(t *testing.T) {
+	h := makeExtendedTestHandler()
+
+	hashFor := func(episodeID string) string {
+		req := httptest.NewRequest("GET", "/api?t=get&id=2&type=series&episode_id="+episodeID, nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("episode_id=%s: status %d", episodeID, w.Code)
+		}
+		decoded, err := bencode.Decode(w.Body.Bytes())
+		if err != nil {
+			t.Fatalf("episode_id=%s: bencode decode: %v", episodeID, err)
+		}
+		torrent := decoded.(map[string]interface{})
+		infoEncoded, _ := bencode.Encode(torrent["info"])
+		sum := sha1.Sum(infoEncoded)
+		return string(sum[:])
+	}
+
+	h101 := hashFor("101")
+	h102 := hashFor("102")
+	h201 := hashFor("201")
+
+	if h101 == h102 {
+		t.Error("episodes 101 and 102 of the same series produced the same torrent hash")
+	}
+	if h101 == h201 {
+		t.Error("episodes 101 and 201 of the same series produced the same torrent hash")
+	}
+	if h102 == h201 {
+		t.Error("episodes 102 and 201 of the same series produced the same torrent hash")
 	}
 }
 
