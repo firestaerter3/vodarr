@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +32,10 @@ func TestTorrentsFilesRelativePaths(t *testing.T) {
 		StrmPaths: []string{
 			"/data/strm/tv/Breaking Bad/Season 01/Breaking.Bad.S01E01.strm",
 			"/data/strm/tv/Breaking Bad/Season 01/Breaking.Bad.S01E02.strm",
+		},
+		MkvPaths: []string{
+			"/data/strm/tv/Breaking Bad/Season 01/Breaking.Bad.S01E01.mkv",
+			"/data/strm/tv/Breaking Bad/Season 01/Breaking.Bad.S01E02.mkv",
 		},
 	})
 
@@ -57,7 +62,8 @@ func TestTorrentsFilesRelativePaths(t *testing.T) {
 			t.Errorf("Name is absolute: %q — Sonarr expects a path relative to save_path", f.Name)
 		}
 	}
-	want0 := "tv/Breaking Bad/Season 01/Breaking.Bad.S01E01.strm"
+	// MkvPaths take precedence — Sonarr must see .mkv so its extension filter passes.
+	want0 := "tv/Breaking Bad/Season 01/Breaking.Bad.S01E01.mkv"
 	if files[0].Name != want0 {
 		t.Errorf("files[0].Name = %q, want %q", files[0].Name, want0)
 	}
@@ -107,7 +113,9 @@ func TestTorrentsInfoAmountLeft(t *testing.T) {
 	}
 
 	// After STRM is written: amount_left must be 0 so Sonarr triggers import.
-	h.store.SetComplete("h1", []string{savePath + "/movies/Test.Movie.strm"})
+	h.store.SetComplete("h1",
+		[]string{savePath + "/movies/Test.Movie.strm"},
+		[]string{savePath + "/movies/Test.Movie.mkv"})
 	entries = doInfo()
 	if entries[0].AmountLeft != 0 {
 		t.Errorf("amount_left (completed) = %d, want 0", entries[0].AmountLeft)
@@ -221,8 +229,9 @@ func TestTorrentsAddTorrentFile(t *testing.T) {
 }
 
 func TestTorrentsFilesEmptyFallback(t *testing.T) {
-	// Before STRM is written, torrents/files should return a fallback placeholder
-	// with a relative name (no absolute path).
+	// Before files are written, torrents/files should return a fallback placeholder
+	// with a relative .mkv name (so Sonarr's extension filter passes even before
+	// the actual files exist on disk).
 	h := makeQbitHandler("/data/strm")
 	h.store.Add(&Torrent{
 		Hash:     "pending",
@@ -248,5 +257,9 @@ func TestTorrentsFilesEmptyFallback(t *testing.T) {
 	}
 	if filepath.IsAbs(files[0].Name) {
 		t.Errorf("fallback Name is absolute: %q", files[0].Name)
+	}
+	// Fallback must use .mkv so Sonarr's video-extension filter passes.
+	if !strings.HasSuffix(files[0].Name, ".mkv") {
+		t.Errorf("fallback Name = %q, want .mkv suffix", files[0].Name)
 	}
 }

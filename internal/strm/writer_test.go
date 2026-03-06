@@ -11,30 +11,47 @@ func TestWriteMovie(t *testing.T) {
 	dir := t.TempDir()
 	w := NewWriter(dir, "movies", "tv")
 
-	path, err := w.WriteMovie("Inception", "2010", "http://server/movie/user/pass/123.mkv")
+	result, err := w.WriteMovie("Inception", "2010", "http://server/movie/user/pass/123.mkv")
 	if err != nil {
 		t.Fatalf("WriteMovie: %v", err)
 	}
 
-	// Check path structure
-	rel, _ := filepath.Rel(dir, path)
+	// Check .strm path structure
+	rel, _ := filepath.Rel(dir, result.StrmPath)
 	if !strings.HasPrefix(rel, "movies/") {
-		t.Errorf("path %q should be under movies/", rel)
+		t.Errorf("strm path %q should be under movies/", rel)
 	}
 	if !strings.Contains(rel, "Inception (2010)") {
-		t.Errorf("path %q should contain folder 'Inception (2010)'", rel)
+		t.Errorf("strm path %q should contain folder 'Inception (2010)'", rel)
 	}
-	if !strings.HasSuffix(path, ".strm") {
-		t.Errorf("path %q should end with .strm", path)
+	if !strings.HasSuffix(result.StrmPath, ".strm") {
+		t.Errorf("strm path %q should end with .strm", result.StrmPath)
 	}
 
 	// Check file content
-	content, err := os.ReadFile(path)
+	content, err := os.ReadFile(result.StrmPath)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	if strings.TrimSpace(string(content)) != "http://server/movie/user/pass/123.mkv" {
 		t.Errorf("content = %q, want stream URL", string(content))
+	}
+
+	// Check companion .mkv stub
+	if !strings.HasSuffix(result.MkvPath, ".mkv") {
+		t.Errorf("mkv path %q should end with .mkv", result.MkvPath)
+	}
+	mkvBase := strings.TrimSuffix(result.MkvPath, ".mkv")
+	strmBase := strings.TrimSuffix(result.StrmPath, ".strm")
+	if mkvBase != strmBase {
+		t.Errorf("mkv and strm share basename: mkv=%q strm=%q", result.MkvPath, result.StrmPath)
+	}
+	if _, err := os.Stat(result.MkvPath); err != nil {
+		t.Errorf("companion .mkv does not exist: %v", err)
+	}
+	mkvContent, _ := os.ReadFile(result.MkvPath)
+	if len(mkvContent) != 0 {
+		t.Errorf("companion .mkv should be empty, got %d bytes", len(mkvContent))
 	}
 }
 
@@ -42,12 +59,12 @@ func TestWriteMovieNoYear(t *testing.T) {
 	dir := t.TempDir()
 	w := NewWriter(dir, "movies", "tv")
 
-	path, err := w.WriteMovie("Unknown Movie", "", "http://x/1.mkv")
+	result, err := w.WriteMovie("Unknown Movie", "", "http://x/1.mkv")
 	if err != nil {
 		t.Fatalf("WriteMovie: %v", err)
 	}
-	if strings.Contains(path, "()") {
-		t.Errorf("path %q should not contain empty year parens", path)
+	if strings.Contains(result.StrmPath, "()") {
+		t.Errorf("path %q should not contain empty year parens", result.StrmPath)
 	}
 }
 
@@ -55,12 +72,12 @@ func TestWriteEpisode(t *testing.T) {
 	dir := t.TempDir()
 	w := NewWriter(dir, "movies", "tv")
 
-	path, err := w.WriteEpisode("Breaking Bad", 3, 10, "Fly", "http://server/series/user/pass/456.mkv")
+	result, err := w.WriteEpisode("Breaking Bad", 3, 10, "Fly", "http://server/series/user/pass/456.mkv")
 	if err != nil {
 		t.Fatalf("WriteEpisode: %v", err)
 	}
 
-	rel, _ := filepath.Rel(dir, path)
+	rel, _ := filepath.Rel(dir, result.StrmPath)
 
 	if !strings.HasPrefix(rel, "tv/") {
 		t.Errorf("path %q should be under tv/", rel)
@@ -74,8 +91,12 @@ func TestWriteEpisode(t *testing.T) {
 	if !strings.Contains(rel, "S03E10") {
 		t.Errorf("path %q should contain S03E10, got %q", rel, rel)
 	}
-	if !strings.HasSuffix(path, ".strm") {
-		t.Errorf("path %q should end with .strm", path)
+	if !strings.HasSuffix(result.StrmPath, ".strm") {
+		t.Errorf("path %q should end with .strm", result.StrmPath)
+	}
+	// Companion .mkv must also exist alongside the .strm
+	if _, err := os.Stat(result.MkvPath); err != nil {
+		t.Errorf("companion .mkv does not exist: %v", err)
 	}
 }
 
@@ -103,13 +124,13 @@ func TestPathTraversal(t *testing.T) {
 	w := NewWriter(dir, "movies", "tv")
 
 	// Names with ".." are sanitized by folderSafe — they succeed safely (not traversal)
-	path, err := w.WriteMovie("../evil", "2024", "http://x/1.mkv")
+	result, err := w.WriteMovie("../evil", "2024", "http://x/1.mkv")
 	if err != nil {
 		t.Errorf("WriteMovie with ../evil: unexpected error: %v", err)
 	}
 	// Verify the file is inside the output directory
-	if !strings.HasPrefix(path, dir) {
-		t.Errorf("WriteMovie path %q escapes output dir %q", path, dir)
+	if !strings.HasPrefix(result.StrmPath, dir) {
+		t.Errorf("WriteMovie path %q escapes output dir %q", result.StrmPath, dir)
 	}
 
 	// Defense-in-depth: write() with a raw path escaping output dir must fail
@@ -169,16 +190,18 @@ func TestStrmFilePermissions(t *testing.T) {
 	dir := t.TempDir()
 	w := NewWriter(dir, "movies", "tv")
 
-	path, err := w.WriteMovie("PermTest", "2024", "http://x/1.mkv")
+	result, err := w.WriteMovie("PermTest", "2024", "http://x/1.mkv")
 	if err != nil {
 		t.Fatalf("WriteMovie: %v", err)
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("Stat: %v", err)
-	}
-	perm := info.Mode().Perm()
-	if perm != 0644 {
-		t.Errorf("file permissions = %04o, want 0644", perm)
+	for _, path := range []string{result.StrmPath, result.MkvPath} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat %q: %v", path, err)
+		}
+		perm := info.Mode().Perm()
+		if perm != 0644 {
+			t.Errorf("file %q permissions = %04o, want 0644", path, perm)
+		}
 	}
 }
