@@ -624,9 +624,24 @@ func (h *Handler) handleTorrentsFiles(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleTorrentsDelete(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	hashes := r.FormValue("hashes")
+	deleteFiles := r.FormValue("deleteFiles") == "true"
 	for _, hash := range strings.Split(hashes, "|") {
 		hash = strings.TrimSpace(hash)
 		if hash != "" {
+			t := h.store.Get(hash)
+			if t != nil {
+				shortHash := hash
+				if len(hash) > 8 {
+					shortHash = hash[:8]
+				}
+				slog.Info("torrent deleted by client", "hash", shortHash, "name", t.Name, "state", t.State, "deleteFiles", deleteFiles)
+			} else {
+				shortHash := hash
+				if len(hash) > 8 {
+					shortHash = hash[:8]
+				}
+				slog.Info("torrent delete requested (not in store)", "hash", shortHash)
+			}
 			h.store.Delete(hash)
 		}
 	}
