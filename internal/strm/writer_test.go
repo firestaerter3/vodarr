@@ -50,8 +50,8 @@ func TestWriteMovie(t *testing.T) {
 		t.Errorf("companion .mkv does not exist: %v", err)
 	}
 	mkvContent, _ := os.ReadFile(result.MkvPath)
-	if len(mkvContent) != 0 {
-		t.Errorf("companion .mkv should be empty, got %d bytes", len(mkvContent))
+	if len(mkvContent) == 0 {
+		t.Errorf("companion .mkv should have stub content, got 0 bytes")
 	}
 }
 

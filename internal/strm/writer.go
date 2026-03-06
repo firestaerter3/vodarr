@@ -88,9 +88,12 @@ func (w *Writer) write(dir, filename, content string) (WriteResult, error) {
 		return WriteResult{}, fmt.Errorf("write strm %s: %w", strmPath, err)
 	}
 
-	// Companion .mkv stub: empty file so Sonarr/Radarr's video-extension filter passes.
+	// Companion .mkv stub: minimal content so Sonarr/Radarr's extension filter AND
+	// file-size checks pass. The stub is not a valid MKV; the import script replaces
+	// it with a symlink to the real .strm file. 150 KB avoids the ~64 KB sample floor.
 	mkvPath := strings.TrimSuffix(strmPath, ".strm") + ".mkv"
-	if err := os.WriteFile(mkvPath, nil, 0644); err != nil {
+	stub := make([]byte, 150*1024)
+	if err := os.WriteFile(mkvPath, stub, 0644); err != nil {
 		return WriteResult{}, fmt.Errorf("write mkv stub %s: %w", mkvPath, err)
 	}
 
