@@ -58,9 +58,12 @@ var (
 	idPixelWidth  = []byte{0xB0}
 	idPixelHeight = []byte{0xBA}
 
-	idAudio      = []byte{0xE1}
+	idAudio       = []byte{0xE1}
 	idSamplingFreq = []byte{0xB5}
-	idChannels   = []byte{0x9F}
+	idChannels    = []byte{0x9F}
+
+	idCluster         = []byte{0x1F, 0x43, 0xB6, 0x75}
+	idClusterTimestamp = []byte{0xE7}
 )
 
 // vint encodes n as an EBML variable-length integer (data-size encoding).
@@ -147,14 +150,16 @@ func buildSegment(info *probe.MediaInfo) []byte {
 		buildInfo(info),
 		buildTracks(info),
 	)
-	// Segment uses an unknown-length size marker so players don't need to seek
-	// to the end to find the segment size.
-	unknownSize := []byte{0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
-	out := make([]byte, 0, len(idSegment)+len(unknownSize)+len(segBody))
-	out = append(out, idSegment...)
-	out = append(out, unknownSize...)
-	out = append(out, segBody...)
-	return out
+	// A minimal Cluster (Timestamp=0, no blocks) makes ffprobe confirm the
+	// streams are real and report codec/resolution/duration from Info+Tracks.
+	// Without a Cluster, ffprobe returns empty JSON even though it parsed the
+	// Tracks element correctly.
+	clusterBody := uintElem(idClusterTimestamp, 0)
+	segBody = append(segBody, mkvElem(idCluster, clusterBody)...)
+
+	// Use a known (exact) Segment size so ffprobe stops reading after our
+	// header data and never tries to parse the sparse 0x00 padding beyond it.
+	return mkvElem(idSegment, segBody)
 }
 
 func buildInfo(info *probe.MediaInfo) []byte {
