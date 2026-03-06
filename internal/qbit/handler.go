@@ -343,8 +343,10 @@ func (h *Handler) processTorrentFile(data []byte, savePath, category string) err
 	return h.processDescriptor(desc, hash, savePath, category)
 }
 
-// processURL fetches the JSON descriptor from a Newznab t=get URL and
-// dispatches to processDescriptor.
+// processURL fetches a descriptor from a Newznab t=get URL and dispatches to
+// processDescriptor. The response may be either:
+//   - a bencode .torrent file (Torznab path): routed to processTorrentFile
+//   - a raw JSON descriptor (legacy Newznab path): parsed directly
 func (h *Handler) processURL(rawURL, savePath, category string) error {
 	// SSRF protection — only allow http/https schemes pointing to ?t=get on the Newznab host
 	if err := h.validateDescriptorURL(rawURL); err != nil {
@@ -360,6 +362,13 @@ func (h *Handler) processURL(rawURL, savePath, category string) error {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, descriptorMaxBytes))
 	if err != nil {
 		return fmt.Errorf("read descriptor: %w", err)
+	}
+
+	// Bencode dicts start with 'd' — route to processTorrentFile so the
+	// info-hash is computed correctly and the descriptor is extracted from
+	// the torrent's comment field (same as the multipart Torznab upload path).
+	if len(body) > 0 && body[0] == 'd' {
+		return h.processTorrentFile(body, savePath, category)
 	}
 
 	var desc itemDescriptor
