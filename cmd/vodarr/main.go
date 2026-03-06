@@ -14,6 +14,7 @@ import (
 	"github.com/vodarr/vodarr/internal/config"
 	"github.com/vodarr/vodarr/internal/index"
 	"github.com/vodarr/vodarr/internal/newznab"
+	"github.com/vodarr/vodarr/internal/probe"
 	"github.com/vodarr/vodarr/internal/qbit"
 	"github.com/vodarr/vodarr/internal/strm"
 	vodarrsync "github.com/vodarr/vodarr/internal/sync"
@@ -71,7 +72,7 @@ func main() {
 	// 2C: Pass APIKey from config
 	newznabHandler := newznab.NewHandler(idx, cfg.Server.APIKey, newznabSrvURL)
 	// 2D: Pass qBit credentials from config; newznabSrvURL used to restrict SSRF to own Newznab host
-	qbitHandler := qbit.NewHandler(qbitStore, strmWriter, xc, cfg.Output.Path, cfg.Server.QbitUsername, cfg.Server.QbitPassword, newznabSrvURL)
+	qbitHandler := qbit.NewHandler(qbitStore, strmWriter, xc, probe.DefaultProber, cfg.Output.Path, cfg.Server.QbitUsername, cfg.Server.QbitPassword, newznabSrvURL)
 	// 2E: Pass web credentials from config
 	webHandler := web.NewHandler(idx, scheduler, web.StaticFS(), cfg, *configPath, cfg.Server.WebUsername, cfg.Server.WebPassword, version)
 

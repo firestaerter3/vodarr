@@ -1,17 +1,20 @@
 package strm
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vodarr/vodarr/internal/probe"
 )
 
 func TestWriteMovie(t *testing.T) {
 	dir := t.TempDir()
 	w := NewWriter(dir, "movies", "tv")
 
-	result, err := w.WriteMovie("Inception", "2010", "http://server/movie/user/pass/123.mkv")
+	result, err := w.WriteMovie("Inception", "2010", "http://server/movie/user/pass/123.mkv", nil)
 	if err != nil {
 		t.Fatalf("WriteMovie: %v", err)
 	}
@@ -59,11 +62,51 @@ func TestWriteMovie(t *testing.T) {
 	}
 }
 
+func TestWriteMovieWithMediaInfo(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir, "movies", "tv")
+
+	info := &probe.MediaInfo{
+		Duration:   7200,
+		VideoCodec: "h264",
+		Width:      1920,
+		Height:     1080,
+		AudioCodec: "aac",
+		SampleRate: 48000,
+		Channels:   2,
+	}
+	result, err := w.WriteMovie("Test Movie", "2024", "http://x/1.mkv", info)
+	if err != nil {
+		t.Fatalf("WriteMovie: %v", err)
+	}
+
+	mkvData, err := os.ReadFile(result.MkvPath)
+	if err != nil {
+		t.Fatalf("ReadFile mkv: %v", err)
+	}
+
+	// First 4 bytes must be the EBML magic.
+	ebmlMagic := []byte{0x1A, 0x45, 0xDF, 0xA3}
+	if len(mkvData) < 4 || !bytes.Equal(mkvData[:4], ebmlMagic) {
+		t.Errorf("mkv stub EBML magic = %X, want %X", mkvData[:4], ebmlMagic)
+	}
+
+	// Logical size must still be 500 MB.
+	fi, err := os.Stat(result.MkvPath)
+	if err != nil {
+		t.Fatalf("Stat mkv: %v", err)
+	}
+	const wantSize = 500 * 1024 * 1024
+	if fi.Size() != wantSize {
+		t.Errorf("mkv logical size = %d, want %d", fi.Size(), wantSize)
+	}
+}
+
 func TestWriteMovieNoYear(t *testing.T) {
 	dir := t.TempDir()
 	w := NewWriter(dir, "movies", "tv")
 
-	result, err := w.WriteMovie("Unknown Movie", "", "http://x/1.mkv")
+	result, err := w.WriteMovie("Unknown Movie", "", "http://x/1.mkv", nil)
 	if err != nil {
 		t.Fatalf("WriteMovie: %v", err)
 	}
@@ -76,7 +119,7 @@ func TestWriteEpisode(t *testing.T) {
 	dir := t.TempDir()
 	w := NewWriter(dir, "movies", "tv")
 
-	result, err := w.WriteEpisode("Breaking Bad", 3, 10, "Fly", "http://server/series/user/pass/456.mkv")
+	result, err := w.WriteEpisode("Breaking Bad", 3, 10, "Fly", "http://server/series/user/pass/456.mkv", nil)
 	if err != nil {
 		t.Fatalf("WriteEpisode: %v", err)
 	}
@@ -128,7 +171,7 @@ func TestPathTraversal(t *testing.T) {
 	w := NewWriter(dir, "movies", "tv")
 
 	// Names with ".." are sanitized by folderSafe — they succeed safely (not traversal)
-	result, err := w.WriteMovie("../evil", "2024", "http://x/1.mkv")
+	result, err := w.WriteMovie("../evil", "2024", "http://x/1.mkv", nil)
 	if err != nil {
 		t.Errorf("WriteMovie with ../evil: unexpected error: %v", err)
 	}
@@ -138,7 +181,7 @@ func TestPathTraversal(t *testing.T) {
 	}
 
 	// Defense-in-depth: write() with a raw path escaping output dir must fail
-	_, err = w.write(dir+"/../escaped", "test.strm", "http://x/1.mkv")
+	_, err = w.write(dir+"/../escaped", "test.strm", "http://x/1.mkv", nil)
 	if err == nil {
 		t.Error("write with path escaping output dir: expected error, got nil")
 	}
@@ -147,8 +190,8 @@ func TestPathTraversal(t *testing.T) {
 func TestFolderSafe(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"Normal Title", "Normal Title"},
-		{"../hack", ".hack"},  // .. collapsed to .
-		{"A/B", "AB"},         // slash stripped
+		{"../hack", ".hack"},              // .. collapsed to .
+		{"A/B", "AB"},                     // slash stripped
 		{"\x00null\x01ctrl", "nullctrl"}, // control chars stripped
 	}
 	for _, c := range cases {
@@ -194,7 +237,7 @@ func TestStrmFilePermissions(t *testing.T) {
 	dir := t.TempDir()
 	w := NewWriter(dir, "movies", "tv")
 
-	result, err := w.WriteMovie("PermTest", "2024", "http://x/1.mkv")
+	result, err := w.WriteMovie("PermTest", "2024", "http://x/1.mkv", nil)
 	if err != nil {
 		t.Fatalf("WriteMovie: %v", err)
 	}
