@@ -115,6 +115,7 @@ func (h *Handler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	slog.Debug("qbit request", "method", r.Method, "path", r.URL.Path, "query", r.URL.RawQuery)
 	h.mux.ServeHTTP(w, r)
 }
 
