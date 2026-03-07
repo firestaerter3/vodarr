@@ -171,6 +171,7 @@ type EpisodeInfo struct {
 	Plot         string            `json:"plot"`
 	Duration     string            `json:"duration"`
 	DurationSecs int               `json:"duration_secs"`
+	Bitrate      int               `json:"bitrate"`
 	MovieImage   string            `json:"movie_image"`
 	Rating       FlexFloat         `json:"rating"`
 	Video        EpisodeVideoInfo  `json:"video"`

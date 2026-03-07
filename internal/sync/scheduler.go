@@ -400,7 +400,7 @@ func (s *Scheduler) fetchAll(ctx context.Context) ([]*index.Item, error) {
 								Title:      ep.Title,
 								Ext:        ep.ContainerExt,
 								Duration:   parseDuration(ep.Info.Duration),
-								FileSize:   extractEpisodeFileSize(ep.Info.Video.Tags),
+								FileSize:   estimateEpisodeFileSize(ep.Info.Bitrate, ep.Info.DurationSecs),
 							})
 						}
 					}
@@ -770,18 +770,14 @@ func (s *Scheduler) setProgress(stage string, current, total int) {
 	s.mu.Unlock()
 }
 
-// extractEpisodeFileSize reads the exact file size from the video tags map
-// returned by get_series_info. Providers that embed MKV metadata include a
-// "NUMBER_OF_BYTES" or "NUMBER_OF_BYTES-eng" tag with the precise byte count.
-func extractEpisodeFileSize(tags map[string]string) int64 {
-	for k, v := range tags {
-		if strings.HasPrefix(k, "NUMBER_OF_BYTES") {
-			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-				return n
-			}
-		}
+// estimateEpisodeFileSize computes an estimated byte count from bitrate (kbps)
+// and duration (seconds), matching the formula used for movies. Returns 0 if
+// either field is absent (provider did not supply metadata).
+func estimateEpisodeFileSize(bitrateKbps, durationSecs int) int64 {
+	if bitrateKbps <= 0 || durationSecs <= 0 {
+		return 0
 	}
-	return 0
+	return int64(bitrateKbps) * 1000 / 8 * int64(durationSecs)
 }
 
 // parseDuration parses an Xtream duration string into fractional seconds.
