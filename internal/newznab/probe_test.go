@@ -127,6 +127,27 @@ func TestProbeItemSizes_ServerError_LeavesZero(t *testing.T) {
 	}
 }
 
+func TestProbeItemSizes_SmallHTMLResponse_LeavesZero(t *testing.T) {
+	// Providers that don't support HEAD return a small HTML error page.
+	// Content-Length below 1 MB must be rejected.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Length", "858")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	h := newProbeHandler(srv.URL)
+	items := []*index.Item{
+		{Type: index.TypeMovie, XtreamID: 1, ContainerExt: "mkv"},
+	}
+	h.probeItemSizes(context.Background(), items, 0, 0)
+
+	if items[0].FileSize != 0 {
+		t.Errorf("FileSize = %d, want 0 for small HTML response", items[0].FileSize)
+	}
+}
+
 func TestProbeItemSizes_SeasonFilter(t *testing.T) {
 	var headCount int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

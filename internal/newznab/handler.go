@@ -466,8 +466,14 @@ func (h *Handler) probeItemSizes(ctx context.Context, items []*index.Item, seaso
 	}
 }
 
+// minVideoBytes is the minimum Content-Length we'll accept as a real media file.
+// Providers that don't support HEAD on stream URLs return small HTML error pages
+// (typically a few hundred bytes). Any real video file is orders of magnitude larger.
+const minVideoBytes = 1 << 20 // 1 MB
+
 // headURL performs an HTTP HEAD request and returns the Content-Length, or 0
-// on any error or when Content-Length is absent.
+// on any error, when Content-Length is absent, or when the response looks like
+// an HTML error page rather than actual media content.
 func (h *Handler) headURL(ctx context.Context, rawURL string) int64 {
 	if rawURL == "" {
 		return 0
@@ -482,7 +488,10 @@ func (h *Handler) headURL(ctx context.Context, rawURL string) int64 {
 		return 0
 	}
 	resp.Body.Close()
-	if resp.ContentLength > 0 {
+	// Reject responses that look like HTML error pages. Providers that don't
+	// support HEAD on stream URLs return a small HTML page; real video files
+	// are always well above 1 MB.
+	if resp.ContentLength >= minVideoBytes {
 		slog.Debug("probed file size", "bytes", resp.ContentLength)
 		return resp.ContentLength
 	}
