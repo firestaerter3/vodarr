@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -784,21 +785,42 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 				tags = []int{tagID}
 			}
 			notif := map[string]interface{}{
-				"name":           "VODarr Cleanup",
-				"implementation": "Webhook",
-				"implementationName": "Webhook",
-				"configContract": "WebhookSettings",
-				"onDownload":     true,
-				"onUpgrade":      false,
-				"onRename":       false,
-				"onDelete":       false,
-				"onHealthIssue":  false,
-				"tags":           tags,
+				"name":                        "VODarr Cleanup",
+				"implementation":              "Webhook",
+				"implementationName":          "Webhook",
+				"configContract":              "WebhookSettings",
+				"onGrab":                      false,
+				"onDownload":                  true,
+				"onUpgrade":                   true,
+				"onRename":                    false,
+				"onSeriesAdd":                 false,
+				"onSeriesDelete":              false,
+				"onEpisodeFileDelete":         false,
+				"onEpisodeFileDeleteForUpgrade": false,
+				"onHealthIssue":               false,
+				"onHealthRestored":            false,
+				"onApplicationUpdate":         false,
+				"onManualInteractionRequired": false,
+				"supportsOnGrab":              false,
+				"supportsOnDownload":          true,
+				"supportsOnUpgrade":           true,
+				"supportsOnRename":            false,
+				"supportsOnSeriesAdd":         false,
+				"supportsOnSeriesDelete":      false,
+				"supportsOnEpisodeFileDelete": false,
+				"supportsOnEpisodeFileDeleteForUpgrade": false,
+				"supportsOnHealthIssue":       false,
+				"supportsOnHealthRestored":    false,
+				"supportsOnApplicationUpdate": false,
+				"supportsOnManualInteractionRequired": false,
+				"includeHealthWarnings":       false,
+				"tags":                        tags,
 				"fields": []map[string]interface{}{
 					{"name": "url", "value": webhookURL + "/api/webhook"},
 					{"name": "method", "value": 1},
 					{"name": "username", "value": ""},
 					{"name": "password", "value": ""},
+					{"name": "headers", "value": []interface{}{}},
 				},
 			}
 			body, _ := json.Marshal(notif)
@@ -809,8 +831,13 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				results["webhook"] = map[string]interface{}{"success": false, "error": err.Error()}
 			} else {
+				respBody, _ := io.ReadAll(postResp.Body)
 				postResp.Body.Close()
-				results["webhook"] = map[string]interface{}{"success": postResp.StatusCode < 300}
+				if postResp.StatusCode < 300 {
+					results["webhook"] = map[string]interface{}{"success": true}
+				} else {
+					results["webhook"] = map[string]interface{}{"success": false, "error": fmt.Sprintf("HTTP %d: %s", postResp.StatusCode, strings.TrimSpace(string(respBody)))}
+				}
 			}
 		}
 	}
