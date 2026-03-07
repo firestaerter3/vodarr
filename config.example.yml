@@ -27,3 +27,14 @@ server:
 
 logging:
   level: "info"
+
+# arr:
+#   instances:
+#     - name: "Sonarr Dutch"
+#       type: sonarr          # "sonarr" or "radarr"
+#       url: "http://<host>:8989"
+#       api_key: "<api-key>"
+#     - name: "Radarr Dutch"
+#       type: radarr
+#       url: "http://<host>:7878"
+#       api_key: "<api-key>"

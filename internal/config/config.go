@@ -16,6 +16,18 @@ type Config struct {
 	Sync    SyncConfig    `yaml:"sync"`
 	Server  ServerConfig  `yaml:"server"`
 	Logging LoggingConfig `yaml:"logging"`
+	Arr     ArrConfig     `yaml:"arr"`
+}
+
+type ArrConfig struct {
+	Instances []ArrInstance `yaml:"instances"`
+}
+
+type ArrInstance struct {
+	Name   string `yaml:"name"`
+	Type   string `yaml:"type"`    // "sonarr" or "radarr"
+	URL    string `yaml:"url"`
+	APIKey string `yaml:"api_key"`
 }
 
 type XtreamConfig struct {

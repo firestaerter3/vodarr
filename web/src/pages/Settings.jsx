@@ -7,7 +7,10 @@ const DEFAULT = {
   sync: { interval: '6h', on_startup: true, parallelism: 10, title_cleanup_patterns: [] },
   server: { newznab_port: 9091, qbit_port: 9092, web_port: 9090 },
   logging: { level: 'info' },
+  arr: { instances: [] },
 }
+
+const BLANK_ARR_INSTANCE = { name: '', type: 'sonarr', url: '', api_key: '' }
 
 function Field({ label, hint, children }) {
   return (
@@ -106,6 +109,9 @@ export default function Settings() {
   const [tmdbTest, setTmdbTest] = useState({ loading: false, success: false, error: null })
   const [tvdbTest, setTvdbTest] = useState({ loading: false, success: false, error: null })
 
+  const [arrStatus, setArrStatus] = useState(null)
+  const [arrSetupState, setArrSetupState] = useState({}) // keyed by instance name
+
   useEffect(() => {
     fetch('/api/config')
       .then(r => r.json())
@@ -114,7 +120,59 @@ export default function Settings() {
         setPatternsText((data.sync?.title_cleanup_patterns || []).join('\n'))
       })
       .catch(e => setLoadError(e.message))
+    fetchArrStatus()
   }, [])
+
+  const fetchArrStatus = () => {
+    fetch('/api/arr/status')
+      .then(r => r.json())
+      .then(data => setArrStatus(data))
+      .catch(() => {}) // non-fatal
+  }
+
+  const addArrInstance = () => {
+    setCfg(prev => ({
+      ...prev,
+      arr: { instances: [...(prev.arr?.instances || []), { ...BLANK_ARR_INSTANCE }] },
+    }))
+  }
+
+  const removeArrInstance = idx => {
+    setCfg(prev => ({
+      ...prev,
+      arr: { instances: prev.arr.instances.filter((_, i) => i !== idx) },
+    }))
+  }
+
+  const setArrInstance = (idx, field, value) => {
+    setCfg(prev => {
+      const instances = prev.arr.instances.map((inst, i) =>
+        i === idx ? { ...inst, [field]: value } : inst
+      )
+      return { ...prev, arr: { instances } }
+    })
+  }
+
+  const handleArrSetup = async name => {
+    if (!window.confirm(`This will enable Import Extra Files (.strm) and register a webhook Connection in "${name}". Proceed?`)) return
+    setArrSetupState(s => ({ ...s, [name]: { loading: true, error: null, success: false } }))
+    try {
+      const res = await fetch('/api/arr/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instance: name }),
+      })
+      const data = await res.json()
+      const allOk = Object.values(data).every(v => v?.success !== false)
+      setArrSetupState(s => ({
+        ...s,
+        [name]: { loading: false, success: allOk, error: allOk ? null : JSON.stringify(data) },
+      }))
+      fetchArrStatus()
+    } catch (e) {
+      setArrSetupState(s => ({ ...s, [name]: { loading: false, success: false, error: e.message } }))
+    }
+  }
 
   // Build the full config payload, parsing patternsText into an array.
   const buildPayload = () => ({
@@ -454,6 +512,82 @@ export default function Settings() {
                 <option value="error">error</option>
               </select>
             </Field>
+          </Section>
+        </div>
+
+        {/* Arr Integration */}
+        <div className="animate-fade-up animate-fade-up-4">
+          <Section title="Arr Integration">
+            <p className="font-mono text-[11px] text-steel-500">
+              Connect Sonarr/Radarr instances. VODarr can auto-configure Import Extra Files and register a webhook to clean up .mkv stubs after import.
+            </p>
+            {(cfg.arr?.instances || []).map((inst, idx) => {
+              const statusInst = arrStatus?.instances?.find(s => s.name === inst.name)
+              const setupSt = arrSetupState[inst.name] || {}
+              return (
+                <div key={idx} className="border border-void-600 rounded p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {statusInst && (
+                        statusInst.issues.length === 0
+                          ? <span className="font-mono text-[11px] text-lime-400">✓ OK</span>
+                          : <span className="font-mono text-[11px] text-yellow-400" title={statusInst.issues.join(', ')}>⚠ {statusInst.issues.length} issue{statusInst.issues.length > 1 ? 's' : ''}</span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeArrInstance(idx)}
+                      className="font-mono text-[11px] text-steel-500 hover:text-red-400 transition-colors"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Name">
+                      <TextInput value={inst.name} onChange={v => setArrInstance(idx, 'name', v)} monospace placeholder="Sonarr Dutch" />
+                    </Field>
+                    <Field label="Type">
+                      <select
+                        value={inst.type}
+                        onChange={e => setArrInstance(idx, 'type', e.target.value)}
+                        className="w-full px-3 py-2 bg-void-800 border border-void-600 rounded font-mono text-[13px] text-steel-300"
+                      >
+                        <option value="sonarr">sonarr</option>
+                        <option value="radarr">radarr</option>
+                      </select>
+                    </Field>
+                  </div>
+                  <Field label="URL">
+                    <TextInput value={inst.url} onChange={v => setArrInstance(idx, 'url', v)} monospace placeholder="http://sonarr:8989" />
+                  </Field>
+                  <Field label="API Key">
+                    <TextInput value={inst.api_key} onChange={v => setArrInstance(idx, 'api_key', v)} type="password" monospace placeholder="••••••••••••••••" />
+                  </Field>
+                  <div className="flex items-center gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleArrSetup(inst.name)}
+                      disabled={setupSt.loading || !inst.name || !inst.url}
+                      className="px-4 py-1.5 bg-void-600 border border-void-500 text-steel-400 rounded font-mono text-[12px] hover:bg-void-500 hover:text-steel-300 transition-all disabled:opacity-40"
+                    >
+                      {setupSt.loading ? 'Configuring…' : 'Auto-Configure'}
+                    </button>
+                    {setupSt.success && <span className="font-mono text-[12px] text-lime-400">✓ Configured</span>}
+                    {setupSt.error && <span className="font-mono text-[12px] text-red-400 truncate max-w-xs" title={setupSt.error}>Failed</span>}
+                    {statusInst?.issues?.length > 0 && (
+                      <span className="font-mono text-[10px] text-steel-500">{statusInst.issues.join(' · ')}</span>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+            <button
+              type="button"
+              onClick={addArrInstance}
+              className="w-full py-2 border border-dashed border-void-500 text-steel-500 rounded font-mono text-[12px] hover:border-void-400 hover:text-steel-400 transition-all"
+            >
+              + Add Instance
+            </button>
           </Section>
         </div>
 
