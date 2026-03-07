@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -394,5 +395,198 @@ func TestNoCORSWildcard(t *testing.T) {
 
 	if got := w.Header().Get("Access-Control-Allow-Origin"); got == "*" {
 		t.Errorf("Access-Control-Allow-Origin = %q, must not be wildcard", got)
+	}
+}
+
+// --- Webhook handler tests ---
+
+func TestWebhookTestEvent(t *testing.T) {
+	h := makeHandler(minimalCfg(), "")
+	body, _ := json.Marshal(map[string]string{"eventType": "Test"})
+	req := httptest.NewRequest("POST", "/api/webhook", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.handleWebhook(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp map[string]string
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["status"] != "ok" {
+		t.Errorf("status = %q, want ok", resp["status"])
+	}
+}
+
+func TestWebhookNonDownloadEvent(t *testing.T) {
+	h := makeHandler(minimalCfg(), "")
+	body, _ := json.Marshal(map[string]string{"eventType": "Rename"})
+	req := httptest.NewRequest("POST", "/api/webhook", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.handleWebhook(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+}
+
+func TestWebhookDownloadDeletesMkv(t *testing.T) {
+	dir := t.TempDir()
+	mkvPath := filepath.Join(dir, "Show S01E01.mkv")
+	strmPath := filepath.Join(dir, "Show S01E01.strm")
+
+	// Create both files
+	if err := os.WriteFile(mkvPath, []byte("fake mkv"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(strmPath, []byte("http://stream.example.com"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := makeHandler(minimalCfg(), "")
+	payload := map[string]interface{}{
+		"eventType": "Download",
+		"episodeFile": map[string]string{
+			"path": mkvPath,
+		},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/api/webhook", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.handleWebhook(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+
+	// mkv should be gone
+	if _, err := os.Stat(mkvPath); !os.IsNotExist(err) {
+		t.Error("expected .mkv to be deleted, but it still exists")
+	}
+	// strm should remain
+	if _, err := os.Stat(strmPath); err != nil {
+		t.Errorf("expected .strm to remain, got error: %v", err)
+	}
+}
+
+func TestWebhookDownloadNoStrmSibling(t *testing.T) {
+	dir := t.TempDir()
+	mkvPath := filepath.Join(dir, "Movie 2024.mkv")
+	if err := os.WriteFile(mkvPath, []byte("fake mkv"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := makeHandler(minimalCfg(), "")
+	payload := map[string]interface{}{
+		"eventType": "Download",
+		"movieFile": map[string]string{
+			"path": mkvPath,
+		},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/api/webhook", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.handleWebhook(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	// mkv should NOT be deleted (no strm sibling)
+	if _, err := os.Stat(mkvPath); err != nil {
+		t.Error("expected .mkv to remain when no .strm sibling exists, but it was deleted")
+	}
+}
+
+func TestWebhookDownloadNonMkvPath(t *testing.T) {
+	h := makeHandler(minimalCfg(), "")
+	payload := map[string]interface{}{
+		"eventType": "Download",
+		"episodeFile": map[string]string{
+			"path": "/some/path/episode.avi",
+		},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/api/webhook", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.handleWebhook(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+}
+
+// --- Arr config roundtrip ---
+
+func TestGetConfigIncludesArrSection(t *testing.T) {
+	cfg := minimalCfg()
+	cfg.Arr = config.ArrConfig{
+		Instances: []config.ArrInstance{
+			{Name: "Sonarr Dutch", Type: "sonarr", URL: "http://sonarr:8989", APIKey: "secret123"},
+		},
+	}
+	h := makeHandler(cfg, "")
+
+	req := httptest.NewRequest("GET", "/api/config", nil)
+	w := httptest.NewRecorder()
+	h.handleGetConfig(w, req)
+
+	var resp configResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Arr.Instances) != 1 {
+		t.Fatalf("want 1 arr instance, got %d", len(resp.Arr.Instances))
+	}
+	if resp.Arr.Instances[0].APIKey != passwordSentinel {
+		t.Errorf("APIKey = %q, want sentinel", resp.Arr.Instances[0].APIKey)
+	}
+	if resp.Arr.Instances[0].URL != "http://sonarr:8989" {
+		t.Errorf("URL = %q, want http://sonarr:8989", resp.Arr.Instances[0].URL)
+	}
+}
+
+func TestPutConfigArrSentinelResolution(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+
+	cfg := minimalCfg()
+	cfg.Arr = config.ArrConfig{
+		Instances: []config.ArrInstance{
+			{Name: "Sonarr Dutch", Type: "sonarr", URL: "http://sonarr:8989", APIKey: "stored-arr-key"},
+		},
+	}
+	h := makeHandler(cfg, cfgPath)
+
+	body := map[string]interface{}{
+		"xtream":  map[string]interface{}{"url": "http://x.com", "username": "u", "password": "p"},
+		"tmdb":    map[string]interface{}{"api_key": "key"},
+		"output":  map[string]interface{}{"path": "/data"},
+		"sync":    map[string]interface{}{"interval": "6h"},
+		"server":  map[string]interface{}{"newznab_port": 7878, "qbit_port": 8080, "web_port": 3000},
+		"logging": map[string]interface{}{"level": "info"},
+		"arr": map[string]interface{}{
+			"instances": []map[string]interface{}{
+				{"name": "Sonarr Dutch", "type": "sonarr", "url": "http://sonarr:8989", "api_key": passwordSentinel},
+			},
+		},
+	}
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest("PUT", "/api/config", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.handlePutConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+
+	h.cfgMu.RLock()
+	stored := h.cfg
+	h.cfgMu.RUnlock()
+
+	if len(stored.Arr.Instances) != 1 {
+		t.Fatalf("want 1 arr instance, got %d", len(stored.Arr.Instances))
+	}
+	if stored.Arr.Instances[0].APIKey != "stored-arr-key" {
+		t.Errorf("APIKey = %q, want stored-arr-key (sentinel resolved)", stored.Arr.Instances[0].APIKey)
 	}
 }

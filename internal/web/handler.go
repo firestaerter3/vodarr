@@ -1,16 +1,19 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
-	"syscall"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/vodarr/vodarr/internal/config"
@@ -92,7 +95,10 @@ func (h *Handler) registerRoutes(staticFS fs.FS) {
 	h.mux.HandleFunc("POST /api/test-tmdb", auth(h.handleTestTMDB))
 	h.mux.HandleFunc("POST /api/test-tvdb", auth(h.handleTestTVDB))
 	h.mux.HandleFunc("POST /api/restart", auth(h.handleRestart))
-	h.mux.HandleFunc("GET /api/health", h.handleHealth) // health always public
+	h.mux.HandleFunc("GET /api/health", h.handleHealth)         // health always public
+	h.mux.HandleFunc("POST /api/webhook", h.handleWebhook)      // webhook always public (called by arr)
+	h.mux.HandleFunc("GET /api/arr/status", auth(h.handleArrStatus))
+	h.mux.HandleFunc("POST /api/arr/setup", auth(h.handleArrSetup))
 
 	// Serve embedded static frontend; fall back to index.html for SPA routing
 	if staticFS != nil {
@@ -170,6 +176,18 @@ type configResponse struct {
 	Sync    syncConfigResp    `json:"sync"`
 	Server  serverConfigResp  `json:"server"`
 	Logging loggingConfigResp `json:"logging"`
+	Arr     arrConfigResp     `json:"arr"`
+}
+
+type arrConfigResp struct {
+	Instances []arrInstanceResp `json:"instances"`
+}
+
+type arrInstanceResp struct {
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	URL    string `json:"url"`
+	APIKey string `json:"api_key"`
 }
 
 type xtreamConfigResp struct {
@@ -240,6 +258,18 @@ func (h *Handler) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		Logging: loggingConfigResp{
 			Level: cfg.Logging.Level,
 		},
+		Arr: func() arrConfigResp {
+			instances := make([]arrInstanceResp, len(cfg.Arr.Instances))
+			for i, inst := range cfg.Arr.Instances {
+				instances[i] = arrInstanceResp{
+					Name:   inst.Name,
+					Type:   inst.Type,
+					URL:    inst.URL,
+					APIKey: maskIfSet(inst.APIKey),
+				}
+			}
+			return arrConfigResp{Instances: instances}
+		}(),
 	}
 	h.writeJSON(w, resp)
 }
@@ -274,6 +304,14 @@ type putConfigRequest struct {
 	Logging struct {
 		Level string `json:"level"`
 	} `json:"logging"`
+	Arr struct {
+		Instances []struct {
+			Name   string `json:"name"`
+			Type   string `json:"type"`
+			URL    string `json:"url"`
+			APIKey string `json:"api_key"`
+		} `json:"instances"`
+	} `json:"arr"`
 }
 
 func (h *Handler) handlePutConfig(w http.ResponseWriter, r *http.Request) {
@@ -323,6 +361,26 @@ func (h *Handler) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	if req.Server.WebPort != 0 {
 		newCfg.Server.WebPort = req.Server.WebPort
 	}
+
+	// Apply arr instances, resolving sentinel API keys against stored values
+	newInstances := make([]config.ArrInstance, len(req.Arr.Instances))
+	for i, ri := range req.Arr.Instances {
+		// Find stored instance with same name to resolve sentinel
+		storedKey := ""
+		for _, si := range h.cfg.Arr.Instances {
+			if si.Name == ri.Name {
+				storedKey = si.APIKey
+				break
+			}
+		}
+		newInstances[i] = config.ArrInstance{
+			Name:   ri.Name,
+			Type:   ri.Type,
+			URL:    ri.URL,
+			APIKey: resolveSentinel(ri.APIKey, storedKey),
+		}
+	}
+	newCfg.Arr.Instances = newInstances
 
 	if err := newCfg.Validate(); err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -452,6 +510,365 @@ func (h *Handler) handleRestart(w http.ResponseWriter, r *http.Request) {
 		slog.Info("restarting via API request")
 		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
 	}()
+}
+
+// handleWebhook handles POST /api/webhook — called by Sonarr/Radarr after import.
+// Deletes the .mkv stub when a matching .strm sibling exists.
+// Always returns 200 (arr retries on non-2xx).
+func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		EventType   string `json:"eventType"`
+		EpisodeFile struct {
+			Path string `json:"path"`
+		} `json:"episodeFile"`
+		MovieFile struct {
+			Path string `json:"path"`
+		} `json:"movieFile"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		// Return 200 even on parse errors so arr doesn't retry
+		h.writeJSON(w, map[string]string{"status": "ok"})
+		return
+	}
+
+	// Test event from arr when adding the webhook — just acknowledge
+	if payload.EventType == "Test" {
+		h.writeJSON(w, map[string]string{"status": "ok"})
+		return
+	}
+
+	// Only act on Download events
+	if payload.EventType != "Download" {
+		h.writeJSON(w, map[string]string{"status": "ok"})
+		return
+	}
+
+	// Determine which path field was populated
+	mkvPath := payload.EpisodeFile.Path
+	if mkvPath == "" {
+		mkvPath = payload.MovieFile.Path
+	}
+	if mkvPath == "" || !strings.HasSuffix(mkvPath, ".mkv") {
+		h.writeJSON(w, map[string]string{"status": "ok"})
+		return
+	}
+
+	// Safety: path must be absolute
+	if !filepath.IsAbs(mkvPath) {
+		slog.Warn("webhook: received non-absolute path, ignoring", "path", mkvPath)
+		h.writeJSON(w, map[string]string{"status": "ok"})
+		return
+	}
+
+	// Only delete if a .strm sibling exists (confirms VODarr managed this download)
+	strmPath := strings.TrimSuffix(mkvPath, ".mkv") + ".strm"
+	if _, err := os.Stat(strmPath); os.IsNotExist(err) {
+		slog.Debug("webhook: no .strm sibling, skipping delete", "mkv", mkvPath)
+		h.writeJSON(w, map[string]string{"status": "ok"})
+		return
+	}
+
+	if err := os.Remove(mkvPath); err != nil {
+		slog.Error("webhook: failed to remove mkv stub", "path", mkvPath, "error", err)
+	} else {
+		slog.Info("webhook: removed mkv stub after import", "path", mkvPath)
+	}
+	h.writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// arrInstanceStatus is the per-instance result from GET /api/arr/status.
+type arrInstanceStatus struct {
+	Name              string   `json:"name"`
+	Type              string   `json:"type"`
+	Reachable         bool     `json:"reachable"`
+	ImportExtraFiles  bool     `json:"importExtraFiles"`
+	ExtraFileExts     string   `json:"extraFileExtensions"`
+	WebhookConfigured bool     `json:"webhookConfigured"`
+	Issues            []string `json:"issues"`
+}
+
+func (h *Handler) handleArrStatus(w http.ResponseWriter, r *http.Request) {
+	h.cfgMu.RLock()
+	cfg := h.cfg
+	h.cfgMu.RUnlock()
+
+	webhookURL := h.webhookURL(cfg)
+	results := make([]arrInstanceStatus, 0, len(cfg.Arr.Instances))
+	for _, inst := range cfg.Arr.Instances {
+		results = append(results, h.checkArrInstance(r.Context(), inst, webhookURL))
+	}
+	h.writeJSON(w, map[string]interface{}{"instances": results})
+}
+
+func (h *Handler) checkArrInstance(ctx context.Context, inst config.ArrInstance, webhookURL string) arrInstanceStatus {
+	st := arrInstanceStatus{Name: inst.Name, Type: inst.Type, Issues: []string{}}
+
+	// Check media management settings
+	mmURL := fmt.Sprintf("%s/api/v3/config/mediamanagement", strings.TrimRight(inst.URL, "/"))
+	mmReq, _ := http.NewRequestWithContext(ctx, "GET", mmURL, nil)
+	mmReq.Header.Set("X-Api-Key", inst.APIKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	mmResp, err := client.Do(mmReq)
+	if err != nil {
+		st.Issues = append(st.Issues, "unreachable: "+err.Error())
+		return st
+	}
+	defer mmResp.Body.Close()
+	st.Reachable = true
+
+	var mm struct {
+		ImportExtraFiles    bool   `json:"importExtraFiles"`
+		ExtraFileExtensions string `json:"extraFileExtensions"`
+	}
+	if err := json.NewDecoder(mmResp.Body).Decode(&mm); err == nil {
+		st.ImportExtraFiles = mm.ImportExtraFiles
+		st.ExtraFileExts = mm.ExtraFileExtensions
+		if !mm.ImportExtraFiles {
+			st.Issues = append(st.Issues, "importExtraFiles not enabled")
+		}
+		if !strings.Contains(mm.ExtraFileExtensions, "strm") {
+			st.Issues = append(st.Issues, "extraFileExtensions does not include strm")
+		}
+	}
+
+	// Check notifications for webhook
+	if webhookURL != "" {
+		notifURL := fmt.Sprintf("%s/api/v3/notification", strings.TrimRight(inst.URL, "/"))
+		notifReq, _ := http.NewRequestWithContext(ctx, "GET", notifURL, nil)
+		notifReq.Header.Set("X-Api-Key", inst.APIKey)
+		notifResp, err := client.Do(notifReq)
+		if err == nil {
+			defer notifResp.Body.Close()
+			var notifications []struct {
+				Implementation string `json:"implementation"`
+				Fields         []struct {
+					Name  string `json:"name"`
+					Value interface{} `json:"value"`
+				} `json:"fields"`
+				OnDownload bool `json:"onDownload"`
+			}
+			if json.NewDecoder(notifResp.Body).Decode(&notifications) == nil {
+				for _, n := range notifications {
+					if n.Implementation != "Webhook" {
+						continue
+					}
+					for _, f := range n.Fields {
+						if f.Name == "url" {
+							if url, ok := f.Value.(string); ok && strings.Contains(url, "/api/webhook") && n.OnDownload {
+								st.WebhookConfigured = true
+							}
+						}
+					}
+				}
+			}
+		}
+		if !st.WebhookConfigured {
+			st.Issues = append(st.Issues, "webhook Connection not configured")
+		}
+	}
+
+	return st
+}
+
+type arrSetupRequest struct {
+	Instance string `json:"instance"`
+}
+
+func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
+	var req arrSetupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	h.cfgMu.RLock()
+	cfg := h.cfg
+	h.cfgMu.RUnlock()
+
+	var inst *config.ArrInstance
+	for i := range cfg.Arr.Instances {
+		if cfg.Arr.Instances[i].Name == req.Instance {
+			inst = &cfg.Arr.Instances[i]
+			break
+		}
+	}
+	if inst == nil {
+		http.Error(w, `{"error":"instance not found"}`, http.StatusNotFound)
+		return
+	}
+
+	webhookURL := h.webhookURL(cfg)
+	if webhookURL == "" {
+		http.Error(w, `{"error":"server.external_url not configured"}`, http.StatusBadRequest)
+		return
+	}
+
+	results := map[string]interface{}{}
+	client := &http.Client{Timeout: 10 * time.Second}
+	baseURL := strings.TrimRight(inst.URL, "/")
+
+	// Step 1: Configure importExtraFiles
+	mmURL := fmt.Sprintf("%s/api/v3/config/mediamanagement", baseURL)
+	getReq, _ := http.NewRequestWithContext(r.Context(), "GET", mmURL, nil)
+	getReq.Header.Set("X-Api-Key", inst.APIKey)
+	getResp, err := client.Do(getReq)
+	if err != nil {
+		results["importExtraFiles"] = map[string]interface{}{"success": false, "error": err.Error()}
+	} else {
+		defer getResp.Body.Close()
+		var mm map[string]interface{}
+		if err := json.NewDecoder(getResp.Body).Decode(&mm); err == nil {
+			mm["importExtraFiles"] = true
+			// Append strm to extraFileExtensions if not already there
+			exts, _ := mm["extraFileExtensions"].(string)
+			if !strings.Contains(exts, "strm") {
+				if exts == "" {
+					mm["extraFileExtensions"] = "strm"
+				} else {
+					mm["extraFileExtensions"] = exts + ",strm"
+				}
+			}
+			body, _ := json.Marshal(mm)
+			putReq, _ := http.NewRequestWithContext(r.Context(), "PUT", mmURL, bytes.NewReader(body))
+			putReq.Header.Set("X-Api-Key", inst.APIKey)
+			putReq.Header.Set("Content-Type", "application/json")
+			putResp, err := client.Do(putReq)
+			if err != nil {
+				results["importExtraFiles"] = map[string]interface{}{"success": false, "error": err.Error()}
+			} else {
+				putResp.Body.Close()
+				results["importExtraFiles"] = map[string]interface{}{"success": putResp.StatusCode < 300}
+			}
+		} else {
+			results["importExtraFiles"] = map[string]interface{}{"success": false, "error": "failed to parse mediamanagement response"}
+		}
+	}
+
+	// Step 2: Look up or create vodarr tag
+	tagID := h.ensureTag(r.Context(), client, baseURL, inst.APIKey, "vodarr")
+
+	// Step 3: Create webhook notification if not already present
+	notifURL := fmt.Sprintf("%s/api/v3/notification", baseURL)
+	listReq, _ := http.NewRequestWithContext(r.Context(), "GET", notifURL, nil)
+	listReq.Header.Set("X-Api-Key", inst.APIKey)
+	listResp, err := client.Do(listReq)
+	if err != nil {
+		results["webhook"] = map[string]interface{}{"success": false, "error": err.Error()}
+	} else {
+		defer listResp.Body.Close()
+		var notifications []struct {
+			Implementation string `json:"implementation"`
+			Fields         []struct {
+				Name  string      `json:"name"`
+				Value interface{} `json:"value"`
+			} `json:"fields"`
+			OnDownload bool `json:"onDownload"`
+		}
+		alreadyExists := false
+		if json.NewDecoder(listResp.Body).Decode(&notifications) == nil {
+			for _, n := range notifications {
+				if n.Implementation != "Webhook" {
+					continue
+				}
+				for _, f := range n.Fields {
+					if f.Name == "url" {
+						if url, ok := f.Value.(string); ok && strings.Contains(url, "/api/webhook") {
+							alreadyExists = true
+						}
+					}
+				}
+			}
+		}
+		if alreadyExists {
+			results["webhook"] = map[string]interface{}{"success": true, "skipped": "already configured"}
+		} else {
+			tags := []int{}
+			if tagID >= 0 {
+				tags = []int{tagID}
+			}
+			notif := map[string]interface{}{
+				"name":           "VODarr Cleanup",
+				"implementation": "Webhook",
+				"implementationName": "Webhook",
+				"configContract": "WebhookSettings",
+				"onDownload":     true,
+				"onUpgrade":      false,
+				"onRename":       false,
+				"onDelete":       false,
+				"onHealthIssue":  false,
+				"tags":           tags,
+				"fields": []map[string]interface{}{
+					{"name": "url", "value": webhookURL + "/api/webhook"},
+					{"name": "method", "value": 1},
+					{"name": "username", "value": ""},
+					{"name": "password", "value": ""},
+				},
+			}
+			body, _ := json.Marshal(notif)
+			postReq, _ := http.NewRequestWithContext(r.Context(), "POST", notifURL, bytes.NewReader(body))
+			postReq.Header.Set("X-Api-Key", inst.APIKey)
+			postReq.Header.Set("Content-Type", "application/json")
+			postResp, err := client.Do(postReq)
+			if err != nil {
+				results["webhook"] = map[string]interface{}{"success": false, "error": err.Error()}
+			} else {
+				postResp.Body.Close()
+				results["webhook"] = map[string]interface{}{"success": postResp.StatusCode < 300}
+			}
+		}
+	}
+
+	h.writeJSON(w, results)
+}
+
+// ensureTag returns the ID of the "vodarr" tag in the given arr instance,
+// creating it if it does not exist. Returns -1 on error.
+func (h *Handler) ensureTag(ctx context.Context, client *http.Client, baseURL, apiKey, label string) int {
+	tagURL := fmt.Sprintf("%s/api/v3/tag", baseURL)
+	req, _ := http.NewRequestWithContext(ctx, "GET", tagURL, nil)
+	req.Header.Set("X-Api-Key", apiKey)
+	resp, err := client.Do(req)
+	if err != nil {
+		return -1
+	}
+	defer resp.Body.Close()
+
+	var tags []struct {
+		ID    int    `json:"id"`
+		Label string `json:"label"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
+		return -1
+	}
+	for _, t := range tags {
+		if t.Label == label {
+			return t.ID
+		}
+	}
+
+	// Create the tag
+	body, _ := json.Marshal(map[string]string{"label": label})
+	postReq, _ := http.NewRequestWithContext(ctx, "POST", tagURL, bytes.NewReader(body))
+	postReq.Header.Set("X-Api-Key", apiKey)
+	postReq.Header.Set("Content-Type", "application/json")
+	postResp, err := client.Do(postReq)
+	if err != nil {
+		return -1
+	}
+	defer postResp.Body.Close()
+	var created struct {
+		ID int `json:"id"`
+	}
+	if err := json.NewDecoder(postResp.Body).Decode(&created); err != nil {
+		return -1
+	}
+	return created.ID
+}
+
+// webhookURL returns the base URL that arr should POST to, derived from server.external_url.
+func (h *Handler) webhookURL(cfg *config.Config) string {
+	return strings.TrimRight(cfg.Server.ExternalURL, "/")
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {

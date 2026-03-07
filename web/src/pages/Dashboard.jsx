@@ -100,9 +100,23 @@ function formatTime(isoStr) {
   } catch { return isoStr }
 }
 
+function useArrStatus() {
+  const [arrStatus, setArrStatus] = useState(null)
+  useEffect(() => {
+    fetch('/api/arr/status')
+      .then(r => r.json())
+      .then(setArrStatus)
+      .catch(() => {})
+  }, [])
+  return arrStatus
+}
+
 export default function Dashboard() {
   const { status, error } = useSyncStatus()
+  const arrStatus = useArrStatus()
   const [syncing, setSyncing] = useState(false)
+
+  const arrIssues = arrStatus?.instances?.filter(i => i.issues?.length > 0) || []
 
   const handleSync = async () => {
     setSyncing(true)
@@ -180,6 +194,24 @@ export default function Dashboard() {
             Last Error
           </p>
           <p className="font-mono text-[13px] text-red-400">{status.error}</p>
+        </div>
+      )}
+
+      {/* Arr integration health banner */}
+      {arrIssues.length > 0 && (
+        <div className="mb-8 border border-yellow-400/30 rounded-lg p-5 bg-yellow-400/5 animate-fade-up">
+          <p className="font-mono text-[11px] text-yellow-400/70 uppercase tracking-widest mb-2">
+            Arr Integration
+          </p>
+          {arrIssues.map(inst => (
+            <div key={inst.name} className="mb-1 last:mb-0">
+              <span className="font-mono text-[12px] text-yellow-400 font-600">{inst.name}: </span>
+              <span className="font-mono text-[12px] text-yellow-400/80">{inst.issues.join(' · ')}</span>
+            </div>
+          ))}
+          <p className="mt-2 font-mono text-[11px] text-steel-500">
+            Go to Settings → Arr Integration to auto-configure.
+          </p>
         </div>
       )}
 
