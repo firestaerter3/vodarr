@@ -140,8 +140,9 @@ func TestBuildMKVHeaderVideoOnly(t *testing.T) {
 	if !bytes.Contains(header, []byte("V_VP9")) {
 		t.Error("header missing video codec")
 	}
-	// No audio codec — A_AAC should NOT appear
-	if bytes.Contains(header, []byte("A_")) {
-		t.Error("header should not contain audio codec entry when AudioCodec is empty")
+	// No audio codec in probe result — fallback AAC track must still be emitted
+	// so Sonarr does not reject the stub with "No audio tracks detected".
+	if !bytes.Contains(header, []byte("A_AAC")) {
+		t.Error("header missing fallback audio codec")
 	}
 }

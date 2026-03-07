@@ -457,12 +457,12 @@ func (h *Handler) processDescriptor(desc itemDescriptor, hash string, savePath, 
 						slog.Warn("probe failed for series", "name", desc.Name, "error", probeErr)
 					}
 				}
-				// Per-episode info: reuse series info but zero duration so
-				// each episode doesn't inherit the first episode's duration.
+				// Per-episode info: reuse series codec/resolution from the probe.
+				// Duration is kept from the first episode — a reasonable approximation
+				// that satisfies Sonarr's sample-detection threshold (requires > ~20 min).
 				var epInfo *probe.MediaInfo
 				if seriesInfo != nil {
 					cp := *seriesInfo
-					cp.Duration = 0
 					epInfo = &cp
 				}
 				result, err := h.writer.WriteEpisode(desc.Name, ep.Season, ep.EpisodeNum, ep.Title, streamURL, epInfo)

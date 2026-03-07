@@ -175,19 +175,24 @@ func buildInfo(info *probe.MediaInfo) []byte {
 }
 
 func buildTracks(info *probe.MediaInfo) []byte {
-	if info == nil {
-		return nil
+	// Work with a local copy so we can fill in defaults without mutating the caller's struct.
+	var effective probe.MediaInfo
+	if info != nil {
+		effective = *info
 	}
-	var tracks []byte
-	if info.VideoCodec != "" {
-		tracks = append(tracks, buildVideoTrack(info)...)
+	// Always emit at least a video track so Sonarr recognises the stub as video.
+	if effective.VideoCodec == "" {
+		effective.VideoCodec = "h264"
+		effective.Width = 1920
+		effective.Height = 1080
 	}
-	if info.AudioCodec != "" {
-		tracks = append(tracks, buildAudioTrack(info)...)
+	// Always emit an audio track — Sonarr rejects files with "No audio tracks detected".
+	if effective.AudioCodec == "" {
+		effective.AudioCodec = "aac"
+		effective.Channels = 2
+		effective.SampleRate = 48000
 	}
-	if len(tracks) == 0 {
-		return nil
-	}
+	tracks := append(buildVideoTrack(&effective), buildAudioTrack(&effective)...)
 	return mkvElem(idTracks, tracks)
 }
 
