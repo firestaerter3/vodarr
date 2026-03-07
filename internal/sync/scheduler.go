@@ -234,8 +234,6 @@ func (s *Scheduler) Sync(ctx context.Context) error {
 		slog.Warn("enrichment completed with errors", "error", err)
 	}
 
-	s.probeSizes(ctx, enriched, cachedByKey)
-
 	s.idx.Replace(enriched)
 	movies, series := s.idx.Counts()
 	slog.Info("sync complete", "movies", movies, "series", series)

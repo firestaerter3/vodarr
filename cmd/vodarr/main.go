@@ -69,8 +69,8 @@ func main() {
 		newznabSrvURL = fmt.Sprintf("http://localhost:%d", cfg.Server.NewznabPort)
 	}
 
-	// 2C: Pass APIKey from config
-	newznabHandler := newznab.NewHandler(idx, cfg.Server.APIKey, newznabSrvURL)
+	// 2C: Pass APIKey from config; xc satisfies URLBuilder for on-demand size probing
+	newznabHandler := newznab.NewHandler(idx, cfg.Server.APIKey, newznabSrvURL, xc)
 	// 2D: Pass qBit credentials from config; newznabSrvURL used to restrict SSRF to own Newznab host
 	qbitHandler := qbit.NewHandler(qbitStore, strmWriter, xc, probe.DefaultProber, cfg.Output.Path, cfg.Server.QbitUsername, cfg.Server.QbitPassword, newznabSrvURL)
 	// 2E: Pass web credentials from config

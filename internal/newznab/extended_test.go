@@ -39,7 +39,7 @@ func makeExtendedTestHandler() *Handler {
 			},
 		},
 	})
-	return NewHandler(idx, "", "http://localhost:7878")
+	return NewHandler(idx, "", "http://localhost:7878", noopURLBuilder{})
 }
 
 // ---- TMDB ID search ----
@@ -198,7 +198,7 @@ func TestHandleTextSearchEmptyQueryReturnsItems(t *testing.T) {
 
 func TestAPIKeyViaHeader(t *testing.T) {
 	idx := index.New()
-	h := NewHandler(idx, "mySecret", "http://localhost:7878")
+	h := NewHandler(idx, "mySecret", "http://localhost:7878", noopURLBuilder{})
 
 	// No key → 401
 	req1 := httptest.NewRequest("GET", "/api?t=caps", nil)

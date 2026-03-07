@@ -5,6 +5,27 @@ import (
 	"testing"
 )
 
+func TestParseDuration(t *testing.T) {
+	cases := []struct {
+		input string
+		want  float64
+	}{
+		{"01:32:45", 5565.0},
+		{"00:45:00", 2700.0},
+		{"45:00", 2700.0},
+		{"1:30", 90.0},
+		{"90", 5400.0}, // bare minutes
+		{"", 0},
+		{"invalid", 0},
+	}
+	for _, c := range cases {
+		got := parseDuration(c.input)
+		if got != c.want {
+			t.Errorf("parseDuration(%q) = %v, want %v", c.input, got, c.want)
+		}
+	}
+}
+
 func TestCleanTitleForSearch(t *testing.T) {
 	tests := []struct {
 		name     string

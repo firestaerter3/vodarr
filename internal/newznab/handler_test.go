@@ -12,6 +12,14 @@ import (
 	"github.com/vodarr/vodarr/internal/index"
 )
 
+// noopURLBuilder is a URLBuilder that returns empty strings, causing HEAD
+// requests to fail gracefully (FileSize stays 0). Used in tests that don't
+// exercise size probing.
+type noopURLBuilder struct{}
+
+func (noopURLBuilder) StreamURL(int, string) string      { return "" }
+func (noopURLBuilder) SeriesStreamURL(int, string) string { return "" }
+
 func makeTestHandler() *Handler {
 	idx := index.New()
 	idx.Replace([]*index.Item{
@@ -35,7 +43,7 @@ func makeTestHandler() *Handler {
 			},
 		},
 	})
-	return NewHandler(idx, "", "http://localhost:7878")
+	return NewHandler(idx, "", "http://localhost:7878", noopURLBuilder{})
 }
 
 func TestHandleCaps(t *testing.T) {
@@ -253,7 +261,7 @@ func TestHandleMovieSearchTypeFilter(t *testing.T) {
 		{Type: index.TypeSeries, XtreamID: 2, Name: "Shared IMDB Series", IMDBId: "tt9999999",
 			Episodes: []index.EpisodeItem{{EpisodeID: 1, Season: 1, EpisodeNum: 1}}},
 	})
-	h := NewHandler(idx, "", "http://localhost:7878")
+	h := NewHandler(idx, "", "http://localhost:7878", noopURLBuilder{})
 
 	req := httptest.NewRequest("GET", "/api?t=movie&imdbid=tt9999999", nil)
 	w := httptest.NewRecorder()
@@ -285,7 +293,7 @@ func TestHandleGetZeroEpisodes(t *testing.T) {
 	idx.Replace([]*index.Item{
 		{Type: index.TypeSeries, XtreamID: 99, Name: "Empty Series"},
 	})
-	h := NewHandler(idx, "", "http://localhost:7878")
+	h := NewHandler(idx, "", "http://localhost:7878", noopURLBuilder{})
 
 	req := httptest.NewRequest("GET", "/api?t=get&id=99&type=series", nil)
 	w := httptest.NewRecorder()
@@ -309,7 +317,7 @@ func TestHandleInvalidAction(t *testing.T) {
 
 func TestAPIKeyRequired(t *testing.T) {
 	idx := index.New()
-	h := NewHandler(idx, "secret123", "http://localhost:7878")
+	h := NewHandler(idx, "secret123", "http://localhost:7878", noopURLBuilder{})
 
 	req := httptest.NewRequest("GET", "/api?t=caps", nil)
 	w := httptest.NewRecorder()

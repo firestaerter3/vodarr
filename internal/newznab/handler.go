@@ -1,6 +1,7 @@
 package newznab
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -10,21 +11,38 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vodarr/vodarr/internal/bencode"
 	"github.com/vodarr/vodarr/internal/index"
 )
 
+// URLBuilder constructs stream URLs from Xtream IDs.
+// *xtream.Client satisfies this interface.
+type URLBuilder interface {
+	StreamURL(streamID int, ext string) string
+	SeriesStreamURL(episodeID int, ext string) string
+}
+
 // Handler serves the Newznab API.
 type Handler struct {
 	idx       *index.Index
 	apiKey    string
 	serverURL string // e.g. "http://vodarr:7878"
+	urls      URLBuilder
+	headHTTP  *http.Client
+	sizeCache sync.Map // "m:{xtreamID}" or "e:{episodeID}" → int64
 }
 
-func NewHandler(idx *index.Index, apiKey, serverURL string) *Handler {
-	return &Handler{idx: idx, apiKey: apiKey, serverURL: serverURL}
+func NewHandler(idx *index.Index, apiKey, serverURL string, urls URLBuilder) *Handler {
+	return &Handler{
+		idx:       idx,
+		apiKey:    apiKey,
+		serverURL: serverURL,
+		urls:      urls,
+		headHTTP:  &http.Client{Timeout: 3 * time.Second},
+	}
 }
 
 // ServeHTTP implements http.Handler.
@@ -107,6 +125,7 @@ func (h *Handler) handleMovieSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.probeItemSizes(r.Context(), results, 0, 0)
 	rssItems := buildMovieRSSItems(h.serverURL, results)
 	offset, limit := parsePaging(q)
 	total := len(rssItems)
@@ -156,6 +175,7 @@ func (h *Handler) handleTVSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.probeItemSizes(r.Context(), results, seasonFilter, epFilter)
 	// 1C: Expand series items into per-episode RSS items with season/episode attrs
 	rssItems := buildEpisodeRSSItems(h.serverURL, results, seasonFilter, epFilter)
 	offset, limit := parsePaging(q)
@@ -187,6 +207,8 @@ func (h *Handler) handleTextSearch(w http.ResponseWriter, r *http.Request) {
 
 	results := h.idx.SearchByTitle(query, year, mediaType, 50)
 	slog.Debug("text search", "q", query, "cat", cat, "hits", len(results))
+
+	h.probeItemSizes(r.Context(), results, 0, 0)
 
 	// Build RSS items: movies one-per-item, series per-episode
 	var rssItems []Item
@@ -396,4 +418,73 @@ func (h *Handler) writeError(w http.ResponseWriter, status int, code int, msg st
 	w.Write([]byte(xml.Header))
 	enc := xml.NewEncoder(w)
 	_ = enc.Encode(errResp{Code: code, Description: msg})
+}
+
+// probeItemSizes sends HTTP HEAD requests to stream URLs for items that do not
+// have a cached size. At most maxProbesPerRequest actual HEAD requests are made
+// per call to bound worst-case latency. Cache hits (sync.Map) are free and not
+// counted against the cap.
+func (h *Handler) probeItemSizes(ctx context.Context, items []*index.Item, seasonFilter, epFilter int) {
+	if h.urls == nil {
+		return
+	}
+	const maxProbesPerRequest = 50
+	probeCount := 0
+
+	for _, item := range items {
+		switch item.Type {
+		case index.TypeMovie:
+			key := fmt.Sprintf("m:%d", item.XtreamID)
+			if v, ok := h.sizeCache.Load(key); ok {
+				item.FileSize = v.(int64)
+			} else if probeCount < maxProbesPerRequest {
+				size := h.headURL(ctx, h.urls.StreamURL(item.XtreamID, item.ContainerExt))
+				h.sizeCache.Store(key, size)
+				item.FileSize = size
+				probeCount++
+			}
+		case index.TypeSeries:
+			for i := range item.Episodes {
+				ep := &item.Episodes[i]
+				if seasonFilter > 0 && ep.Season != seasonFilter {
+					continue
+				}
+				if epFilter > 0 && ep.EpisodeNum != epFilter {
+					continue
+				}
+				key := fmt.Sprintf("e:%d", ep.EpisodeID)
+				if v, ok := h.sizeCache.Load(key); ok {
+					ep.FileSize = v.(int64)
+				} else if probeCount < maxProbesPerRequest {
+					size := h.headURL(ctx, h.urls.SeriesStreamURL(ep.EpisodeID, ep.Ext))
+					h.sizeCache.Store(key, size)
+					ep.FileSize = size
+					probeCount++
+				}
+			}
+		}
+	}
+}
+
+// headURL performs an HTTP HEAD request and returns the Content-Length, or 0
+// on any error or when Content-Length is absent.
+func (h *Handler) headURL(ctx context.Context, rawURL string) int64 {
+	if rawURL == "" {
+		return 0
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, rawURL, nil)
+	if err != nil {
+		return 0
+	}
+	resp, err := h.headHTTP.Do(req)
+	if err != nil {
+		slog.Debug("probe HEAD failed", "error", err)
+		return 0
+	}
+	resp.Body.Close()
+	if resp.ContentLength > 0 {
+		slog.Debug("probed file size", "bytes", resp.ContentLength)
+		return resp.ContentLength
+	}
+	return 0
 }
