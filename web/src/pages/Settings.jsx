@@ -74,6 +74,21 @@ function Section({ title, children }) {
   )
 }
 
+function StatusRow({ label, ok, fail, failMsg }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="font-mono text-[11px] text-steel-500">{label}</span>
+      {ok && <span className="font-mono text-[11px] text-lime-400">✓ OK</span>}
+      {fail && (
+        <span className="font-mono text-[11px] text-yellow-400" title={failMsg || ''}>
+          ✗ {failMsg || 'Not configured'}
+        </span>
+      )}
+      {!ok && !fail && <span className="font-mono text-[11px] text-steel-600">—</span>}
+    </div>
+  )
+}
+
 function TestButton({ onClick, loading, success, error }) {
   return (
     <div className="flex items-center gap-3 pt-1">
@@ -524,16 +539,13 @@ export default function Settings() {
             {(cfg.arr?.instances || []).map((inst, idx) => {
               const statusInst = arrStatus?.instances?.find(s => s.name === inst.name)
               const setupSt = arrSetupState[inst.name] || {}
+              const apiOk = statusInst?.reachable === true
+              const apiFail = statusInst?.reachable === false
+              const webhookOk = statusInst?.webhookConfigured && statusInst?.importExtraFiles && statusInst?.extraFileExtensions?.includes('strm')
+              const webhookIssues = statusInst && !webhookOk ? (statusInst.issues.filter(i => i !== 'unreachable: ' + (statusInst.issues[0] || ''))) : []
               return (
                 <div key={idx} className="border border-void-600 rounded p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {statusInst && (
-                        statusInst.issues.length === 0
-                          ? <span className="font-mono text-[11px] text-lime-400">✓ OK</span>
-                          : <span className="font-mono text-[11px] text-yellow-400" title={statusInst.issues.join(', ')}>⚠ {statusInst.issues.length} issue{statusInst.issues.length > 1 ? 's' : ''}</span>
-                      )}
-                    </div>
+                  <div className="flex items-center justify-end">
                     <button
                       type="button"
                       onClick={() => removeArrInstance(idx)}
@@ -544,7 +556,7 @@ export default function Settings() {
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Name">
-                      <TextInput value={inst.name} onChange={v => setArrInstance(idx, 'name', v)} monospace placeholder="Sonarr Dutch" />
+                      <TextInput value={inst.name} onChange={v => setArrInstance(idx, 'name', v)} monospace placeholder="Sonarr" />
                     </Field>
                     <Field label="Type">
                       <select
@@ -563,6 +575,25 @@ export default function Settings() {
                   <Field label="API Key">
                     <TextInput value={inst.api_key} onChange={v => setArrInstance(idx, 'api_key', v)} type="password" monospace placeholder="••••••••••••••••" />
                   </Field>
+
+                  {/* Status rows */}
+                  {statusInst && (
+                    <div className="border-t border-void-600 pt-3 space-y-1.5">
+                      <StatusRow
+                        label="API Connection"
+                        ok={apiOk}
+                        fail={apiFail}
+                        failMsg={statusInst.issues.find(i => i.startsWith('unreachable'))}
+                      />
+                      <StatusRow
+                        label="Webhook & .strm import"
+                        ok={webhookOk}
+                        fail={!webhookOk && apiOk}
+                        failMsg={statusInst.issues.filter(i => !i.startsWith('unreachable')).join(' · ')}
+                      />
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-3 pt-1">
                     <button
                       type="button"
@@ -572,11 +603,7 @@ export default function Settings() {
                     >
                       {setupSt.loading ? 'Configuring…' : 'Auto-Configure'}
                     </button>
-                    {setupSt.success && <span className="font-mono text-[12px] text-lime-400">✓ Configured</span>}
-                    {setupSt.error && <span className="font-mono text-[12px] text-red-400 truncate max-w-xs" title={setupSt.error}>Failed</span>}
-                    {statusInst?.issues?.length > 0 && (
-                      <span className="font-mono text-[10px] text-steel-500">{statusInst.issues.join(' · ')}</span>
-                    )}
+                    {setupSt.error && <span className="font-mono text-[12px] text-red-400" title={setupSt.error}>Setup failed</span>}
                   </div>
                 </div>
               )
