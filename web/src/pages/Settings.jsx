@@ -460,7 +460,7 @@ export default function Settings() {
               <textarea
                 value={patternsText}
                 onChange={e => setPatternsText(e.target.value)}
-                placeholder={'\\s*\\(NL GESPROKEN\\)\n\\s*\\[DUBBED\\]'}
+                placeholder={'\\s*\\(DUBBED\\)\n\\s*\\[EXTENDED\\]'}
                 rows={4}
                 className="w-full px-3 py-2 bg-void-800 border border-void-600 rounded text-steel-300 text-[13px] font-mono resize-y"
               />

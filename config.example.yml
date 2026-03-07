@@ -17,8 +17,8 @@ sync:
   on_startup: true         # Sync immediately on start
   parallelism: 10          # Concurrent workers for series fetch and TMDB enrichment (1-20)
   # title_cleanup_patterns:  # Regex patterns removed from stream names before TMDB search
-  #   - '\s*\(NL GESPROKEN\)'
-  #   - '\s*\[DUBBED\]'
+  #   - '\s*\(DUBBED\)'
+  #   - '\s*\[EXTENDED\]'
 
 server:
   newznab_port: 9091       # Newznab indexer API port
@@ -30,11 +30,11 @@ logging:
 
 # arr:
 #   instances:
-#     - name: "Sonarr Dutch"
+#     - name: "Sonarr"
 #       type: sonarr          # "sonarr" or "radarr"
 #       url: "http://<host>:8989"
 #       api_key: "<api-key>"
-#     - name: "Radarr Dutch"
+#     - name: "Radarr"
 #       type: radarr
 #       url: "http://<host>:7878"
 #       api_key: "<api-key>"
