@@ -592,7 +592,7 @@ func (h *Handler) handleArrStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := h.cfg
 	h.cfgMu.RUnlock()
 
-	webhookURL := h.webhookURL(cfg)
+	webhookURL := h.webhookURL(cfg, r)
 	results := make([]arrInstanceStatus, 0, len(cfg.Arr.Instances))
 	for _, inst := range cfg.Arr.Instances {
 		results = append(results, h.checkArrInstance(r.Context(), inst, webhookURL))
@@ -698,11 +698,7 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	webhookURL := h.webhookURL(cfg)
-	if webhookURL == "" {
-		http.Error(w, `{"error":"server.external_url not configured"}`, http.StatusBadRequest)
-		return
-	}
+	webhookURL := h.webhookURL(cfg, r)
 
 	results := map[string]interface{}{}
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -866,9 +862,17 @@ func (h *Handler) ensureTag(ctx context.Context, client *http.Client, baseURL, a
 	return created.ID
 }
 
-// webhookURL returns the base URL that arr should POST to, derived from server.external_url.
-func (h *Handler) webhookURL(cfg *config.Config) string {
-	return strings.TrimRight(cfg.Server.ExternalURL, "/")
+// webhookURL returns the base URL that arr should POST to.
+// Uses server.external_url if set, otherwise derives it from the incoming request.
+func (h *Handler) webhookURL(cfg *config.Config, r *http.Request) string {
+	if u := strings.TrimRight(cfg.Server.ExternalURL, "/"); u != "" {
+		return u
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {

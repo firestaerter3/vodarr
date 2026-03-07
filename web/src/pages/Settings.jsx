@@ -178,10 +178,15 @@ export default function Settings() {
         body: JSON.stringify({ instance: name }),
       })
       const data = await res.json()
-      const allOk = Object.values(data).every(v => v?.success !== false)
+      if (!res.ok) {
+        setArrSetupState(s => ({ ...s, [name]: { loading: false, success: false, error: data.error || `HTTP ${res.status}` } }))
+        return
+      }
+      const failures = Object.entries(data).filter(([, v]) => v?.success === false).map(([k, v]) => `${k}: ${v.error || 'failed'}`)
+      const allOk = failures.length === 0
       setArrSetupState(s => ({
         ...s,
-        [name]: { loading: false, success: allOk, error: allOk ? null : JSON.stringify(data) },
+        [name]: { loading: false, success: allOk, error: allOk ? null : failures.join('; ') },
       }))
       fetchArrStatus()
     } catch (e) {
@@ -603,7 +608,7 @@ export default function Settings() {
                     >
                       {setupSt.loading ? 'Configuring…' : 'Auto-Configure'}
                     </button>
-                    {setupSt.error && <span className="font-mono text-[12px] text-red-400" title={setupSt.error}>Setup failed</span>}
+                    {setupSt.error && <span className="font-mono text-[12px] text-red-400">✗ {setupSt.error}</span>}
                   </div>
                 </div>
               )
