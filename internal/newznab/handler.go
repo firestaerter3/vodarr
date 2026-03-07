@@ -422,11 +422,27 @@ func (h *Handler) writeError(w http.ResponseWriter, status int, code int, msg st
 	_ = enc.Encode(errResp{Code: code, Description: msg})
 }
 
+// assumedBytesPerSec returns an assumed byte rate based on stream name markers.
+// Used as a fallback when the provider returns no bitrate or duration metadata.
+func assumedBytesPerSec(name string) int64 {
+	switch {
+	case fourKRe.MatchString(name):
+		return 1_500_000 // ~12 Mbps
+	case hevcRe.MatchString(name):
+		return 500_000 // ~4 Mbps
+	default:
+		return 750_000 // ~6 Mbps (1080p H.264)
+	}
+}
+
 // probeItemSizes fetches estimated file sizes for movie results by querying
 // provider metadata (bitrate × duration). Series episode sizes are populated
 // at sync time from the provider's NUMBER_OF_BYTES tag, so no probing is done
 // here for series. At most maxProbesPerRequest API calls are made per request;
 // results are cached in sizeCache for the lifetime of the Handler.
+// When the provider returns 0 and item.RuntimeMins > 0, a TMDB-runtime-based
+// estimate is used as fallback. Provider 0s are not cached so future requests
+// can retry if the provider recovers.
 func (h *Handler) probeItemSizes(ctx context.Context, items []*index.Item, seasonFilter, epFilter int) {
 	if h.urls == nil {
 		return
@@ -443,12 +459,18 @@ func (h *Handler) probeItemSizes(ctx context.Context, items []*index.Item, seaso
 			item.FileSize = v.(int64)
 		} else if probeCount < maxProbesPerRequest {
 			size := h.urls.EstimateMovieFileSize(ctx, item.XtreamID)
-			h.sizeCache.Store(key, size)
-			item.FileSize = size
 			probeCount++
 			if size > 0 {
+				h.sizeCache.Store(key, size)
+				item.FileSize = size
 				slog.Debug("estimated movie size", "xtream_id", item.XtreamID, "bytes", size)
+			} else if item.RuntimeMins > 0 {
+				tmdbSize := assumedBytesPerSec(item.Name) * int64(item.RuntimeMins) * 60
+				h.sizeCache.Store(key, tmdbSize)
+				item.FileSize = tmdbSize
+				slog.Debug("estimated movie size via TMDB runtime", "xtream_id", item.XtreamID, "runtime_mins", item.RuntimeMins, "bytes", tmdbSize)
 			}
+			// If size==0 and no RuntimeMins, skip caching so future requests retry the provider.
 		}
 	}
 }

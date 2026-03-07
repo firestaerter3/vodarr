@@ -558,6 +558,7 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 							item.TVDBId = ci.TVDBId
 							item.TMDBId = ci.TMDBId
 							item.CanonicalName = ci.CanonicalName
+							item.RuntimeMins = ci.RuntimeMins
 							if ci.CanonicalName != "" {
 								n := atomic.AddInt64(&progressN, 1)
 								s.setProgress("Enriching via TMDB", int(n), total)
@@ -606,14 +607,20 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 							}
 						}
 
-						// Fetch CanonicalName by ID when still missing (provider supplied
-						// TMDBId directly without a title search, e.g. Dutch VOD streams).
+						// Fetch CanonicalName and RuntimeMins by ID when still missing
+						// (provider supplied TMDBId directly without a title search,
+						// e.g. Dutch VOD streams).
 						if item.CanonicalName == "" {
 							var canonTitle string
 							var titleErr error
 							switch item.Type {
 							case index.TypeMovie:
-								canonTitle, titleErr = s.tmdb.GetMovieTitle(ctx, tmdbID)
+								var movieDetails *tmdb.MovieDetails
+								movieDetails, titleErr = s.tmdb.GetMovieDetails(ctx, tmdbID)
+								if movieDetails != nil {
+									canonTitle = movieDetails.Title
+									item.RuntimeMins = movieDetails.RuntimeMins
+								}
 							case index.TypeSeries:
 								canonTitle, titleErr = s.tmdb.GetTVTitle(ctx, tmdbID)
 							}

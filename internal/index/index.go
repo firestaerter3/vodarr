@@ -46,9 +46,10 @@ type Item struct {
 	Episodes []EpisodeItem
 
 	// Stream info
-	ContainerExt string // mkv, mp4, ts, etc.
-	FileSize     int64  `json:"file_size,omitempty"` // bytes, from HTTP HEAD at sync time
-	Duration     float64 `json:"duration,omitempty"` // seconds, from Xtream API
+	ContainerExt string  // mkv, mp4, ts, etc.
+	FileSize     int64   `json:"file_size,omitempty"`    // bytes, from HTTP HEAD at sync time
+	Duration     float64 `json:"duration,omitempty"`     // seconds, from Xtream API
+	RuntimeMins  int     `json:"runtime_mins,omitempty"` // minutes, from TMDB at enrichment time
 
 	// Normalised title used for fuzzy matching (set by index on insert)
 	normalizedTitle string

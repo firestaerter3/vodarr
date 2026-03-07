@@ -127,3 +127,107 @@ func TestProbeItemSizes_Cap50(t *testing.T) {
 		}
 	}
 }
+
+func TestProbeItemSizes_TMDBRuntimeFallback_Default(t *testing.T) {
+	// Provider returns 0; item has RuntimeMins — fallback uses 6 Mbps (default 1080p H.264).
+	// Expected: 750_000 B/s * 120 min * 60 s/min = 5_400_000_000
+	h, mock := newMockHandler(0)
+	items := []*index.Item{
+		{Type: index.TypeMovie, XtreamID: 10, ContainerExt: "mkv", RuntimeMins: 120},
+	}
+	h.probeItemSizes(context.Background(), items, 0, 0)
+
+	if atomic.LoadInt64(&mock.callCount) != 1 {
+		t.Fatalf("expected 1 API call, got %d", mock.callCount)
+	}
+	const want = int64(750_000 * 120 * 60)
+	if items[0].FileSize != want {
+		t.Errorf("FileSize = %d, want %d (TMDB runtime fallback)", items[0].FileSize, want)
+	}
+}
+
+func TestProbeItemSizes_TMDBRuntimeFallback_HEVC(t *testing.T) {
+	// Provider returns 0; item name contains HEVC — fallback uses 4 Mbps.
+	// Expected: 500_000 B/s * 120 min * 60 s/min = 3_600_000_000
+	h, mock := newMockHandler(0)
+	items := []*index.Item{
+		{Type: index.TypeMovie, XtreamID: 11, Name: "The Movie HEVC 1080p", ContainerExt: "mkv", RuntimeMins: 120},
+	}
+	h.probeItemSizes(context.Background(), items, 0, 0)
+
+	if atomic.LoadInt64(&mock.callCount) != 1 {
+		t.Fatalf("expected 1 API call, got %d", mock.callCount)
+	}
+	const want = int64(500_000 * 120 * 60)
+	if items[0].FileSize != want {
+		t.Errorf("FileSize = %d, want %d (HEVC fallback)", items[0].FileSize, want)
+	}
+}
+
+func TestProbeItemSizes_TMDBRuntimeFallback_4K(t *testing.T) {
+	// Provider returns 0; item name contains 4K — fallback uses 12 Mbps.
+	// Expected: 1_500_000 B/s * 90 min * 60 s/min = 8_100_000_000
+	h, mock := newMockHandler(0)
+	items := []*index.Item{
+		{Type: index.TypeMovie, XtreamID: 12, Name: "Action Movie 4K", ContainerExt: "mkv", RuntimeMins: 90},
+	}
+	h.probeItemSizes(context.Background(), items, 0, 0)
+
+	if atomic.LoadInt64(&mock.callCount) != 1 {
+		t.Fatalf("expected 1 API call, got %d", mock.callCount)
+	}
+	const want = int64(1_500_000 * 90 * 60)
+	if items[0].FileSize != want {
+		t.Errorf("FileSize = %d, want %d (4K fallback)", items[0].FileSize, want)
+	}
+}
+
+func TestProbeItemSizes_ZeroRuntimeMinsStaysZero(t *testing.T) {
+	// Provider returns 0 and RuntimeMins is 0 — FileSize stays 0.
+	h, _ := newMockHandler(0)
+	items := []*index.Item{
+		{Type: index.TypeMovie, XtreamID: 13, ContainerExt: "mkv", RuntimeMins: 0},
+	}
+	h.probeItemSizes(context.Background(), items, 0, 0)
+
+	if items[0].FileSize != 0 {
+		t.Errorf("FileSize = %d, want 0 when provider returns 0 and RuntimeMins is 0", items[0].FileSize)
+	}
+}
+
+func TestProbeItemSizes_ProviderRetryAfterZero(t *testing.T) {
+	// When provider returns 0 and RuntimeMins is 0, result is not cached,
+	// so the next request retries the provider.
+	h, mock := newMockHandler(0)
+	items := []*index.Item{
+		{Type: index.TypeMovie, XtreamID: 14, ContainerExt: "mkv"},
+	}
+
+	h.probeItemSizes(context.Background(), items, 0, 0)
+	h.probeItemSizes(context.Background(), items, 0, 0)
+
+	if atomic.LoadInt64(&mock.callCount) != 2 {
+		t.Errorf("expected 2 API calls (no cache on zero), got %d", mock.callCount)
+	}
+}
+
+func TestProbeItemSizes_TMDBFallbackIsCached(t *testing.T) {
+	// When TMDB fallback is used, the estimated value is cached so the
+	// provider is not retried on subsequent requests.
+	h, mock := newMockHandler(0)
+	items := []*index.Item{
+		{Type: index.TypeMovie, XtreamID: 15, ContainerExt: "mkv", RuntimeMins: 100},
+	}
+
+	h.probeItemSizes(context.Background(), items, 0, 0)
+	items[0].FileSize = 0 // reset to verify cache restores it
+	h.probeItemSizes(context.Background(), items, 0, 0)
+
+	if atomic.LoadInt64(&mock.callCount) != 1 {
+		t.Errorf("expected 1 API call (TMDB estimate cached), got %d", mock.callCount)
+	}
+	const want = int64(750_000 * 100 * 60)
+	if items[0].FileSize != want {
+		t.Errorf("FileSize after cache hit = %d, want %d", items[0].FileSize, want)
+	}
+}

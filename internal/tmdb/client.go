@@ -222,27 +222,45 @@ func (c *Client) GetTVExternalIDs(ctx context.Context, tmdbID int) (*ExternalIDs
 	return &ids, nil
 }
 
+// MovieDetails holds the title and runtime for a movie.
+type MovieDetails struct {
+	Title       string
+	RuntimeMins int
+}
+
+// GetMovieDetails fetches the English title and runtime (minutes) for a movie by TMDB ID.
+// Used when a provider-supplied TMDBId is already known but CanonicalName or RuntimeMins is empty.
+func (c *Client) GetMovieDetails(ctx context.Context, tmdbID int) (*MovieDetails, error) {
+	key := fmt.Sprintf("movie_details:%d", tmdbID)
+	if hit, ok := c.cacheGet(key); ok {
+		if hit == nil {
+			return nil, nil
+		}
+		return hit.(*MovieDetails), nil
+	}
+
+	var raw struct {
+		Title   string `json:"title"`
+		Runtime int    `json:"runtime"`
+	}
+	if err := c.get(ctx, fmt.Sprintf("/movie/%d", tmdbID), nil, &raw); err != nil {
+		if errors.Is(err, errNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("movie details %d: %w", tmdbID, err)
+	}
+	details := &MovieDetails{Title: raw.Title, RuntimeMins: raw.Runtime}
+	c.cachePut(key, details)
+	return details, nil
+}
+
 // GetMovieTitle fetches the English title for a movie by TMDB ID.
 // Used when a provider-supplied TMDBId is already known but CanonicalName is empty.
 func (c *Client) GetMovieTitle(ctx context.Context, tmdbID int) (string, error) {
-	key := fmt.Sprintf("movie_title:%d", tmdbID)
-	if hit, ok := c.cacheGet(key); ok {
-		if hit == nil {
-			return "", nil
-		}
-		return hit.(string), nil
+	details, err := c.GetMovieDetails(ctx, tmdbID)
+	if err != nil || details == nil {
+		return "", err
 	}
-
-	var details struct {
-		Title string `json:"title"`
-	}
-	if err := c.get(ctx, fmt.Sprintf("/movie/%d", tmdbID), nil, &details); err != nil {
-		if errors.Is(err, errNotFound) {
-			return "", nil
-		}
-		return "", fmt.Errorf("movie title %d: %w", tmdbID, err)
-	}
-	c.cachePut(key, details.Title)
 	return details.Title, nil
 }
 
