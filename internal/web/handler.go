@@ -593,7 +593,7 @@ func (h *Handler) handleArrStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := h.cfg
 	h.cfgMu.RUnlock()
 
-	webhookURL := h.webhookURL(cfg, r)
+	webhookURL := h.webhookURL(r)
 	results := make([]arrInstanceStatus, 0, len(cfg.Arr.Instances))
 	for _, inst := range cfg.Arr.Instances {
 		results = append(results, h.checkArrInstance(r.Context(), inst, webhookURL))
@@ -699,7 +699,7 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	webhookURL := h.webhookURL(cfg, r)
+	webhookURL := h.webhookURL(r)
 
 	results := map[string]interface{}{}
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -890,11 +890,8 @@ func (h *Handler) ensureTag(ctx context.Context, client *http.Client, baseURL, a
 }
 
 // webhookURL returns the base URL that arr should POST to.
-// Uses server.external_url if set, otherwise derives it from the incoming request.
-func (h *Handler) webhookURL(cfg *config.Config, r *http.Request) string {
-	if u := strings.TrimRight(cfg.Server.ExternalURL, "/"); u != "" {
-		return u
-	}
+// Always derived from the incoming request's Host header (the web server port).
+func (h *Handler) webhookURL(r *http.Request) string {
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"

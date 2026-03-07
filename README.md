@@ -4,7 +4,7 @@ Bridges an Xtream Codes IPTV provider with Sonarr and Radarr. Search your IPTV c
 
 ## How it works
 
-1. **Sync** — VODarr fetches your full IPTV catalog from the Xtream provider, enriches each title with IMDB/TVDB IDs via TMDB, and holds everything in memory.
+1. **Sync** — VODarr fetches your full IPTV catalog from the Xtream provider, enriches each title with IMDB/TVDB IDs via TMDB, and holds everything in memory. The index is cached to disk so restarts are instant.
 2. **Search** — Sonarr/Radarr query VODarr like any Newznab indexer (port 9091). Searches match by IMDB ID, TVDB ID, or fuzzy title.
 3. **Grab** — Sonarr/Radarr send a "download" request to VODarr's fake qBittorrent client (port 9092). VODarr writes a tiny `.strm` file pointing to the stream URL and immediately reports the torrent as complete.
 4. **Play** — Jellyfin imports the `.strm` file and streams directly from the IPTV provider on playback.
@@ -21,7 +21,20 @@ Open `http://<host>:9090` for the web UI.
 
 ## Sonarr / Radarr setup
 
-**Indexer** (Newznab):
+### Option A — Auto-configure (recommended)
+
+Add your arr instances to `config.yml` under the `arr:` section (see [Configuration](#configuration)), then open the VODarr web UI → **Settings → Arr Instances** and click **Setup** next to each instance.
+
+VODarr will automatically:
+- Add itself as a **Torznab indexer** (categories 5000 for TV, 2000 for movies)
+- Add itself as a **qBittorrent download client**
+- Register a **webhook** so arr notifies VODarr on import (used for cleanup)
+
+The Settings page shows the live connection and webhook status for each configured instance.
+
+### Option B — Manual setup
+
+**Indexer** (Torznab):
 
 | Setting | Value |
 |---------|-------|
@@ -34,7 +47,11 @@ Open `http://<host>:9090` for the web UI.
 | Setting | Value |
 |---------|-------|
 | Host | `<vodarr-host>` |
-| Port | `8080` |
+| Port | `9092` |
+
+**Webhook** (optional but recommended):
+
+In Sonarr/Radarr → Settings → Connect → add a Webhook pointing to `http://<vodarr-host>:9090/api/webhook`. This lets VODarr remove the `.mkv` stub files from disk after arr imports the episode, keeping your output directory clean.
 
 ## Shared path requirement
 
@@ -61,7 +78,7 @@ This is a limitation of the Xtream Codes protocol — credentials are embedded i
 - Restrict the output directory to the minimum set of users/processes that need it (`chmod 750`).
 - Do not expose the output directory publicly or via an unauthenticated network share.
 - If your IPTV provider supports sub-accounts or connection limits, create a dedicated account for VODarr with a unique password. That way, if credentials are ever exposed, you can rotate just that account without affecting other devices.
-- Enable the VODarr web UI authentication (`server.web_username` / `server.web_password`) if the web port is accessible on your network.
+- Enable VODarr web UI authentication (`server.web_username` / `server.web_password`) if the web port is accessible on your network.
 
 ## Configuration
 
@@ -73,6 +90,7 @@ xtream:
 
 tmdb:
   api_key: "your-tmdb-api-key"        # Free at themoviedb.org/settings/api
+  # tvdb_api_key: "your-tvdb-api-key" # Optional; enables TVDB fallback for unmatched series
 
 output:
   path: "/data/strm"                  # Root for all .strm files
@@ -82,18 +100,37 @@ output:
 sync:
   interval: "6h"                      # Go duration: 1h, 6h, 24h, etc.
   on_startup: true
+  parallelism: 10                     # Concurrent workers for TMDB enrichment (1–20)
+  # title_cleanup_patterns:           # Regex patterns stripped from stream names before TMDB search
+  #   - '\s*\(DUBBED\)'
+  #   - '\s*\[EXTENDED\]'
 
 server:
-  newznab_port: 7878
-  qbit_port: 8080
-  web_port: 3000
+  newznab_port: 9091
+  qbit_port: 9092
+  web_port: 9090
   # Optional auth
   web_username: ""
   web_password: ""
   api_key: ""                         # Newznab API key; empty = no auth
+  qbit_username: ""                   # qBittorrent auth (if required by arr)
+  qbit_password: ""
+  external_url: ""                    # Public base URL (e.g. http://vodarr:9090); used in webhook URLs sent to arr
 
 logging:
   level: "info"                       # debug | info | warn | error
+
+# arr instances for auto-configure (Settings → Arr Instances → Setup)
+# arr:
+#   instances:
+#     - name: "Sonarr"
+#       type: sonarr                  # "sonarr" or "radarr"
+#       url: "http://<host>:8989"
+#       api_key: "<api-key>"
+#     - name: "Radarr"
+#       type: radarr
+#       url: "http://<host>:7878"
+#       api_key: "<api-key>"
 ```
 
 ## Architecture & design decisions

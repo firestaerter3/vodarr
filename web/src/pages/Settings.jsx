@@ -391,6 +391,94 @@ export default function Settings() {
           </Section>
         </div>
 
+        {/* Arr Integration */}
+        <div className="animate-fade-up animate-fade-up-2">
+          <Section title="Arr Integration">
+            <p className="font-mono text-[11px] text-steel-500">
+              Connect Sonarr/Radarr instances. VODarr can auto-configure Import Extra Files and register a webhook to clean up .mkv stubs after import.
+            </p>
+            {(cfg.arr?.instances || []).map((inst, idx) => {
+              const statusInst = arrStatus?.instances?.find(s => s.name === inst.name)
+              const setupSt = arrSetupState[inst.name] || {}
+              const apiOk = statusInst?.reachable === true
+              const apiFail = statusInst?.reachable === false
+              const webhookOk = statusInst?.webhookConfigured && statusInst?.importExtraFiles && statusInst?.extraFileExtensions?.includes('strm')
+              const webhookIssues = statusInst && !webhookOk ? (statusInst.issues.filter(i => i !== 'unreachable: ' + (statusInst.issues[0] || ''))) : []
+              return (
+                <div key={idx} className="border border-void-600 rounded p-4 space-y-3">
+                  <div className="flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={() => removeArrInstance(idx)}
+                      className="font-mono text-[11px] text-steel-500 hover:text-red-400 transition-colors"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Name">
+                      <TextInput value={inst.name} onChange={v => setArrInstance(idx, 'name', v)} monospace placeholder="Sonarr" />
+                    </Field>
+                    <Field label="Type">
+                      <select
+                        value={inst.type}
+                        onChange={e => setArrInstance(idx, 'type', e.target.value)}
+                        className="w-full px-3 py-2 bg-void-800 border border-void-600 rounded font-mono text-[13px] text-steel-300"
+                      >
+                        <option value="sonarr">sonarr</option>
+                        <option value="radarr">radarr</option>
+                      </select>
+                    </Field>
+                  </div>
+                  <Field label="URL">
+                    <TextInput value={inst.url} onChange={v => setArrInstance(idx, 'url', v)} monospace placeholder="http://sonarr:8989" />
+                  </Field>
+                  <Field label="API Key">
+                    <TextInput value={inst.api_key} onChange={v => setArrInstance(idx, 'api_key', v)} type="password" monospace placeholder="••••••••••••••••" />
+                  </Field>
+
+                  {/* Status rows */}
+                  {statusInst && (
+                    <div className="border-t border-void-600 pt-3 space-y-1.5">
+                      <StatusRow
+                        label="API Connection"
+                        ok={apiOk}
+                        fail={apiFail}
+                        failMsg={statusInst.issues.find(i => i.startsWith('unreachable'))}
+                      />
+                      <StatusRow
+                        label="Webhook & .strm import"
+                        ok={webhookOk}
+                        fail={!webhookOk && apiOk}
+                        failMsg={statusInst.issues.filter(i => !i.startsWith('unreachable')).join(' · ')}
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleArrSetup(inst.name)}
+                      disabled={setupSt.loading || !inst.name || !inst.url}
+                      className="px-4 py-1.5 bg-void-600 border border-void-500 text-steel-400 rounded font-mono text-[12px] hover:bg-void-500 hover:text-steel-300 transition-all disabled:opacity-40"
+                    >
+                      {setupSt.loading ? 'Configuring…' : 'Auto-Configure'}
+                    </button>
+                    {setupSt.error && <span className="font-mono text-[12px] text-red-400">✗ {setupSt.error}</span>}
+                  </div>
+                </div>
+              )
+            })}
+            <button
+              type="button"
+              onClick={addArrInstance}
+              className="w-full py-2 border border-dashed border-void-500 text-steel-500 rounded font-mono text-[12px] hover:border-void-400 hover:text-steel-400 transition-all"
+            >
+              + Add Instance
+            </button>
+          </Section>
+        </div>
+
         {/* TMDB */}
         <div className="animate-fade-up animate-fade-up-2">
           <Section title="TMDB">
@@ -532,94 +620,6 @@ export default function Settings() {
                 <option value="error">error</option>
               </select>
             </Field>
-          </Section>
-        </div>
-
-        {/* Arr Integration */}
-        <div className="animate-fade-up animate-fade-up-4">
-          <Section title="Arr Integration">
-            <p className="font-mono text-[11px] text-steel-500">
-              Connect Sonarr/Radarr instances. VODarr can auto-configure Import Extra Files and register a webhook to clean up .mkv stubs after import.
-            </p>
-            {(cfg.arr?.instances || []).map((inst, idx) => {
-              const statusInst = arrStatus?.instances?.find(s => s.name === inst.name)
-              const setupSt = arrSetupState[inst.name] || {}
-              const apiOk = statusInst?.reachable === true
-              const apiFail = statusInst?.reachable === false
-              const webhookOk = statusInst?.webhookConfigured && statusInst?.importExtraFiles && statusInst?.extraFileExtensions?.includes('strm')
-              const webhookIssues = statusInst && !webhookOk ? (statusInst.issues.filter(i => i !== 'unreachable: ' + (statusInst.issues[0] || ''))) : []
-              return (
-                <div key={idx} className="border border-void-600 rounded p-4 space-y-3">
-                  <div className="flex items-center justify-end">
-                    <button
-                      type="button"
-                      onClick={() => removeArrInstance(idx)}
-                      className="font-mono text-[11px] text-steel-500 hover:text-red-400 transition-colors"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="Name">
-                      <TextInput value={inst.name} onChange={v => setArrInstance(idx, 'name', v)} monospace placeholder="Sonarr" />
-                    </Field>
-                    <Field label="Type">
-                      <select
-                        value={inst.type}
-                        onChange={e => setArrInstance(idx, 'type', e.target.value)}
-                        className="w-full px-3 py-2 bg-void-800 border border-void-600 rounded font-mono text-[13px] text-steel-300"
-                      >
-                        <option value="sonarr">sonarr</option>
-                        <option value="radarr">radarr</option>
-                      </select>
-                    </Field>
-                  </div>
-                  <Field label="URL">
-                    <TextInput value={inst.url} onChange={v => setArrInstance(idx, 'url', v)} monospace placeholder="http://sonarr:8989" />
-                  </Field>
-                  <Field label="API Key">
-                    <TextInput value={inst.api_key} onChange={v => setArrInstance(idx, 'api_key', v)} type="password" monospace placeholder="••••••••••••••••" />
-                  </Field>
-
-                  {/* Status rows */}
-                  {statusInst && (
-                    <div className="border-t border-void-600 pt-3 space-y-1.5">
-                      <StatusRow
-                        label="API Connection"
-                        ok={apiOk}
-                        fail={apiFail}
-                        failMsg={statusInst.issues.find(i => i.startsWith('unreachable'))}
-                      />
-                      <StatusRow
-                        label="Webhook & .strm import"
-                        ok={webhookOk}
-                        fail={!webhookOk && apiOk}
-                        failMsg={statusInst.issues.filter(i => !i.startsWith('unreachable')).join(' · ')}
-                      />
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-3 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => handleArrSetup(inst.name)}
-                      disabled={setupSt.loading || !inst.name || !inst.url}
-                      className="px-4 py-1.5 bg-void-600 border border-void-500 text-steel-400 rounded font-mono text-[12px] hover:bg-void-500 hover:text-steel-300 transition-all disabled:opacity-40"
-                    >
-                      {setupSt.loading ? 'Configuring…' : 'Auto-Configure'}
-                    </button>
-                    {setupSt.error && <span className="font-mono text-[12px] text-red-400">✗ {setupSt.error}</span>}
-                  </div>
-                </div>
-              )
-            })}
-            <button
-              type="button"
-              onClick={addArrInstance}
-              className="w-full py-2 border border-dashed border-void-500 text-steel-500 rounded font-mono text-[12px] hover:border-void-400 hover:text-steel-400 transition-all"
-            >
-              + Add Instance
-            </button>
           </Section>
         </div>
 
