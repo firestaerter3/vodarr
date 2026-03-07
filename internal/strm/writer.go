@@ -106,7 +106,11 @@ func (w *Writer) write(dir, filename, content string, info *probe.MediaInfo) (Wr
 		mkvFile.Close()
 		return WriteResult{}, fmt.Errorf("write mkv header %s: %w", mkvPath, err)
 	}
-	if err := mkvFile.Truncate(500 * 1024 * 1024); err != nil {
+	stubSize := int64(500 * 1024 * 1024)
+	if info != nil && info.Size > 1024*1024 {
+		stubSize = info.Size
+	}
+	if err := mkvFile.Truncate(stubSize); err != nil {
 		mkvFile.Close()
 		return WriteResult{}, fmt.Errorf("truncate mkv stub %s: %w", mkvPath, err)
 	}

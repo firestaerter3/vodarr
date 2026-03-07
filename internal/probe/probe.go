@@ -12,6 +12,7 @@ import (
 // MediaInfo holds stream metadata extracted by ffprobe.
 type MediaInfo struct {
 	Duration   float64 // seconds
+	Size       int64   // bytes, from Content-Length via format.size (0 if unknown)
 	VideoCodec string  // ffprobe codec_name e.g. "h264"
 	Width      int
 	Height     int
@@ -40,6 +41,7 @@ type ffprobeStream struct {
 
 type ffprobeFormat struct {
 	Duration string `json:"duration"` // string in ffprobe output
+	Size     string `json:"size"`     // string in ffprobe output; reflects Content-Length for HTTP streams
 }
 
 // Probe runs ffprobe on the given URL and returns extracted MediaInfo.
@@ -77,6 +79,12 @@ func parseFFProbeOutput(data []byte) (*MediaInfo, error) {
 		d, err := strconv.ParseFloat(fp.Format.Duration, 64)
 		if err == nil {
 			info.Duration = d
+		}
+	}
+	if fp.Format.Size != "" {
+		sz, err := strconv.ParseInt(fp.Format.Size, 10, 64)
+		if err == nil {
+			info.Size = sz
 		}
 	}
 

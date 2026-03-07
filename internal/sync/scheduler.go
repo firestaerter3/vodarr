@@ -234,6 +234,8 @@ func (s *Scheduler) Sync(ctx context.Context) error {
 		slog.Warn("enrichment completed with errors", "error", err)
 	}
 
+	s.probeSizes(ctx, enriched, cachedByKey)
+
 	s.idx.Replace(enriched)
 	movies, series := s.idx.Counts()
 	slog.Info("sync complete", "movies", movies, "series", series)
@@ -303,6 +305,7 @@ func (s *Scheduler) fetchAll(ctx context.Context) ([]*index.Item, error) {
 			Poster:       st.Poster,
 			ReleaseDate:  st.ReleaseDate,
 			ContainerExt: st.ContainerExt,
+			Duration:     parseDuration(st.Duration),
 		}
 		if st.TMDBId.Int() > 0 {
 			item.TMDBId = strconv.Itoa(st.TMDBId.Int())
@@ -398,6 +401,7 @@ func (s *Scheduler) fetchAll(ctx context.Context) ([]*index.Item, error) {
 								EpisodeNum: ep.EpisodeNum.Int(),
 								Title:      ep.Title,
 								Ext:        ep.ContainerExt,
+								Duration:   parseDuration(ep.Info.Duration),
 							})
 						}
 					}
@@ -765,4 +769,30 @@ func (s *Scheduler) setProgress(stage string, current, total int) {
 	s.mu.Lock()
 	s.status.Progress = Progress{Stage: stage, Current: current, Total: total}
 	s.mu.Unlock()
+}
+
+// parseDuration parses an Xtream duration string into fractional seconds.
+// Accepts "HH:MM:SS", "MM:SS", or a bare integer/float minute string.
+func parseDuration(s string) float64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	parts := strings.Split(s, ":")
+	switch len(parts) {
+	case 3: // HH:MM:SS
+		h, _ := strconv.Atoi(parts[0])
+		m, _ := strconv.Atoi(parts[1])
+		sec, _ := strconv.ParseFloat(parts[2], 64)
+		return float64(h*3600+m*60) + sec
+	case 2: // MM:SS
+		m, _ := strconv.Atoi(parts[0])
+		sec, _ := strconv.ParseFloat(parts[1], 64)
+		return float64(m*60) + sec
+	default: // bare minutes
+		if min, err := strconv.ParseFloat(s, 64); err == nil {
+			return min * 60
+		}
+		return 0
+	}
 }

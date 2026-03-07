@@ -8,6 +8,90 @@ import (
 	"github.com/vodarr/vodarr/internal/index"
 )
 
+func TestFileSizeInRSS(t *testing.T) {
+	const wantSize = int64(2_147_483_648) // 2 GB
+
+	movie := &index.Item{
+		Type:     index.TypeMovie,
+		XtreamID: 1,
+		Name:     "Big Movie",
+		FileSize: wantSize,
+	}
+	items := buildMovieRSSItems("http://localhost", []*index.Item{movie})
+	if len(items) == 0 {
+		t.Fatal("expected item")
+	}
+	it := items[0]
+	if it.Size != wantSize {
+		t.Errorf("Size = %d, want %d", it.Size, wantSize)
+	}
+	if it.Enclosure.Length != wantSize {
+		t.Errorf("Enclosure.Length = %d, want %d", it.Enclosure.Length, wantSize)
+	}
+	var foundSize bool
+	for _, attr := range it.Attrs {
+		if attr.Name == "size" && attr.Value == "2147483648" {
+			foundSize = true
+		}
+	}
+	if !foundSize {
+		t.Error("missing size attr with real file size")
+	}
+}
+
+func TestFileSizeFallbackRSS(t *testing.T) {
+	const fallback = int64(1024 * 1024 * 1024)
+
+	movie := &index.Item{Type: index.TypeMovie, XtreamID: 2, Name: "No Size Movie"}
+	items := buildMovieRSSItems("http://localhost", []*index.Item{movie})
+	if items[0].Size != fallback {
+		t.Errorf("Size = %d, want fallback %d", items[0].Size, fallback)
+	}
+}
+
+func TestEpisodeFileSizeInRSS(t *testing.T) {
+	const wantSize = int64(1_500_000_000)
+
+	series := &index.Item{
+		Type:     index.TypeSeries,
+		XtreamID: 10,
+		Name:     "Test Series",
+		Episodes: []index.EpisodeItem{
+			{EpisodeID: 1, Season: 1, EpisodeNum: 1, FileSize: wantSize},
+		},
+	}
+	items := buildEpisodeRSSItems("http://localhost", []*index.Item{series}, 0, 0)
+	if len(items) == 0 {
+		t.Fatal("expected episode item")
+	}
+	it := items[0]
+	if it.Size != wantSize {
+		t.Errorf("episode Size = %d, want %d", it.Size, wantSize)
+	}
+	if it.Enclosure.Length != wantSize {
+		t.Errorf("episode Enclosure.Length = %d, want %d", it.Enclosure.Length, wantSize)
+	}
+}
+
+func TestDurationAttrInRSS(t *testing.T) {
+	movie := &index.Item{
+		Type:     index.TypeMovie,
+		XtreamID: 1,
+		Name:     "Duration Movie",
+		Duration: 5565, // 01:32:45
+	}
+	items := buildMovieRSSItems("http://localhost", []*index.Item{movie})
+	var found bool
+	for _, attr := range items[0].Attrs {
+		if attr.Name == "duration" && attr.Value == "5565" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("missing duration attr")
+	}
+}
+
 func TestBuildRSSMovie(t *testing.T) {
 	items := []*index.Item{
 		{

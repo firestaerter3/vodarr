@@ -47,6 +47,8 @@ type Item struct {
 
 	// Stream info
 	ContainerExt string // mkv, mp4, ts, etc.
+	FileSize     int64  `json:"file_size,omitempty"` // bytes, from HTTP HEAD at sync time
+	Duration     float64 `json:"duration,omitempty"` // seconds, from Xtream API
 
 	// Normalised title used for fuzzy matching (set by index on insert)
 	normalizedTitle string
@@ -55,11 +57,13 @@ type Item struct {
 // EpisodeItem is an episode within a series.
 // JSON tags are explicit to match the field names expected by the qBit handler.
 type EpisodeItem struct {
-	EpisodeID  int    `json:"EpisodeID"`
-	Season     int    `json:"Season"`
-	EpisodeNum int    `json:"EpisodeNum"`
-	Title      string `json:"Title"`
-	Ext        string `json:"Ext"`
+	EpisodeID  int     `json:"EpisodeID"`
+	Season     int     `json:"Season"`
+	EpisodeNum int     `json:"EpisodeNum"`
+	Title      string  `json:"Title"`
+	Ext        string  `json:"Ext"`
+	FileSize   int64   `json:"file_size,omitempty"` // bytes, from HTTP HEAD at sync time
+	Duration   float64 `json:"duration,omitempty"`  // seconds, from Xtream API
 }
 
 // Index is a thread-safe in-memory content index.

@@ -323,7 +323,10 @@ func buildEpisodeRSSItems(serverURL string, items []*index.Item, seasonFilter, e
 
 // episodeToRSS converts a single episode to an RSS item.
 func episodeToRSS(serverURL string, series *index.Item, ep index.EpisodeItem) Item {
-	size := int64(1024 * 1024 * 1024)
+	size := int64(1024 * 1024 * 1024) // 1 GB fallback
+	if ep.FileSize > 0 {
+		size = ep.FileSize
+	}
 	epTag := fmt.Sprintf("S%02dE%02d", ep.Season, ep.EpisodeNum)
 	guid := fmt.Sprintf("vodarr-ep-%d-%d-%d", series.XtreamID, ep.Season, ep.EpisodeNum)
 	downloadURL := fmt.Sprintf("%s/api?t=get&id=%d&type=series&episode_id=%d",
@@ -389,6 +392,9 @@ func episodeToRSS(serverURL string, series *index.Item, ep index.EpisodeItem) It
 	if series.IMDBId != "" {
 		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "imdbid", Value: series.IMDBId})
 	}
+	if ep.Duration > 0 {
+		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "duration", Value: fmt.Sprintf("%.0f", ep.Duration)})
+	}
 	if hevcRe.MatchString(series.Name) {
 		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "video_codec", Value: "x265"})
 	}
@@ -405,7 +411,10 @@ func episodeToRSS(serverURL string, series *index.Item, ep index.EpisodeItem) It
 }
 
 func itemToRSS(serverURL string, item *index.Item) Item {
-	size := int64(1024 * 1024 * 1024) // 1 GB placeholder
+	size := int64(1024 * 1024 * 1024) // 1 GB fallback
+	if item.FileSize > 0 {
+		size = item.FileSize
+	}
 	category := "5000"
 	categoryName := "TV"
 	if item.Type == index.TypeMovie {
@@ -452,6 +461,9 @@ func itemToRSS(serverURL string, item *index.Item) Item {
 	}
 	if item.Rating > 0 {
 		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "rating", Value: fmt.Sprintf("%.1f", item.Rating)})
+	}
+	if item.Duration > 0 {
+		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "duration", Value: fmt.Sprintf("%.0f", item.Duration)})
 	}
 	if hevcRe.MatchString(item.Name) {
 		rssItem.Attrs = append(rssItem.Attrs, Attr{Name: "video_codec", Value: "x265"})
