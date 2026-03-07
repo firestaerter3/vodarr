@@ -162,13 +162,23 @@ func buildSegment(info *probe.MediaInfo) []byte {
 	return mkvElem(idSegment, segBody)
 }
 
+// defaultDurationSecs is used when the probe returns no duration (e.g. HLS
+// streams where the manifest doesn't report a total length). 45 minutes is
+// safely above Sonarr's sample-detection threshold (~20 min for TV episodes).
+const defaultDurationSecs = 45 * 60
+
 func buildInfo(info *probe.MediaInfo) []byte {
 	// TimestampScale = 1 000 000 ns means each timestamp unit is 1 ms.
 	body := uintElem(idTimestampScale, 1000000)
-	if info != nil && info.Duration > 0 {
-		// Duration is expressed in TimestampScale units (milliseconds).
-		body = append(body, float64Elem(idDuration, info.Duration*1000)...)
+	dur := 0.0
+	if info != nil {
+		dur = info.Duration
 	}
+	if dur <= 0 {
+		dur = defaultDurationSecs
+	}
+	// Duration is expressed in TimestampScale units (milliseconds).
+	body = append(body, float64Elem(idDuration, dur*1000)...)
 	body = append(body, strElem(idMuxingApp, "vodarr")...)
 	body = append(body, strElem(idWritingApp, "vodarr")...)
 	return mkvElem(idInfo, body)
