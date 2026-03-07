@@ -18,11 +18,15 @@ import (
 	"github.com/vodarr/vodarr/internal/index"
 )
 
-// URLBuilder constructs stream URLs from Xtream IDs.
+
+// URLBuilder constructs stream URLs and estimates movie file sizes.
 // *xtream.Client satisfies this interface.
 type URLBuilder interface {
 	StreamURL(streamID int, ext string) string
 	SeriesStreamURL(episodeID int, ext string) string
+	// EstimateMovieFileSize returns an estimated byte count for a VOD stream,
+	// or 0 if the provider does not supply the necessary metadata.
+	EstimateMovieFileSize(ctx context.Context, streamID int) int64
 }
 
 // Handler serves the Newznab API.
@@ -31,8 +35,7 @@ type Handler struct {
 	apiKey    string
 	serverURL string // e.g. "http://vodarr:7878"
 	urls      URLBuilder
-	headHTTP  *http.Client
-	sizeCache sync.Map // "m:{xtreamID}" or "e:{episodeID}" → int64
+	sizeCache sync.Map // "m:{xtreamID}" → int64
 }
 
 func NewHandler(idx *index.Index, apiKey, serverURL string, urls URLBuilder) *Handler {
@@ -41,7 +44,6 @@ func NewHandler(idx *index.Index, apiKey, serverURL string, urls URLBuilder) *Ha
 		apiKey:    apiKey,
 		serverURL: serverURL,
 		urls:      urls,
-		headHTTP:  &http.Client{Timeout: 3 * time.Second},
 	}
 }
 
@@ -420,10 +422,11 @@ func (h *Handler) writeError(w http.ResponseWriter, status int, code int, msg st
 	_ = enc.Encode(errResp{Code: code, Description: msg})
 }
 
-// probeItemSizes sends HTTP HEAD requests to stream URLs for items that do not
-// have a cached size. At most maxProbesPerRequest actual HEAD requests are made
-// per call to bound worst-case latency. Cache hits (sync.Map) are free and not
-// counted against the cap.
+// probeItemSizes fetches estimated file sizes for movie results by querying
+// provider metadata (bitrate × duration). Series episode sizes are populated
+// at sync time from the provider's NUMBER_OF_BYTES tag, so no probing is done
+// here for series. At most maxProbesPerRequest API calls are made per request;
+// results are cached in sizeCache for the lifetime of the Handler.
 func (h *Handler) probeItemSizes(ctx context.Context, items []*index.Item, seasonFilter, epFilter int) {
 	if h.urls == nil {
 		return
@@ -432,68 +435,20 @@ func (h *Handler) probeItemSizes(ctx context.Context, items []*index.Item, seaso
 	probeCount := 0
 
 	for _, item := range items {
-		switch item.Type {
-		case index.TypeMovie:
-			key := fmt.Sprintf("m:%d", item.XtreamID)
-			if v, ok := h.sizeCache.Load(key); ok {
-				item.FileSize = v.(int64)
-			} else if probeCount < maxProbesPerRequest {
-				size := h.headURL(ctx, h.urls.StreamURL(item.XtreamID, item.ContainerExt))
-				h.sizeCache.Store(key, size)
-				item.FileSize = size
-				probeCount++
-			}
-		case index.TypeSeries:
-			for i := range item.Episodes {
-				ep := &item.Episodes[i]
-				if seasonFilter > 0 && ep.Season != seasonFilter {
-					continue
-				}
-				if epFilter > 0 && ep.EpisodeNum != epFilter {
-					continue
-				}
-				key := fmt.Sprintf("e:%d", ep.EpisodeID)
-				if v, ok := h.sizeCache.Load(key); ok {
-					ep.FileSize = v.(int64)
-				} else if probeCount < maxProbesPerRequest {
-					size := h.headURL(ctx, h.urls.SeriesStreamURL(ep.EpisodeID, ep.Ext))
-					h.sizeCache.Store(key, size)
-					ep.FileSize = size
-					probeCount++
-				}
+		if item.Type != index.TypeMovie {
+			continue // series sizes set at sync time from NUMBER_OF_BYTES tag
+		}
+		key := fmt.Sprintf("m:%d", item.XtreamID)
+		if v, ok := h.sizeCache.Load(key); ok {
+			item.FileSize = v.(int64)
+		} else if probeCount < maxProbesPerRequest {
+			size := h.urls.EstimateMovieFileSize(ctx, item.XtreamID)
+			h.sizeCache.Store(key, size)
+			item.FileSize = size
+			probeCount++
+			if size > 0 {
+				slog.Debug("estimated movie size", "xtream_id", item.XtreamID, "bytes", size)
 			}
 		}
 	}
-}
-
-// minVideoBytes is the minimum Content-Length we'll accept as a real media file.
-// Providers that don't support HEAD on stream URLs return small HTML error pages
-// (typically a few hundred bytes). Any real video file is orders of magnitude larger.
-const minVideoBytes = 1 << 20 // 1 MB
-
-// headURL performs an HTTP HEAD request and returns the Content-Length, or 0
-// on any error, when Content-Length is absent, or when the response looks like
-// an HTML error page rather than actual media content.
-func (h *Handler) headURL(ctx context.Context, rawURL string) int64 {
-	if rawURL == "" {
-		return 0
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, rawURL, nil)
-	if err != nil {
-		return 0
-	}
-	resp, err := h.headHTTP.Do(req)
-	if err != nil {
-		slog.Debug("probe HEAD failed", "error", err)
-		return 0
-	}
-	resp.Body.Close()
-	// Reject responses that look like HTML error pages. Providers that don't
-	// support HEAD on stream URLs return a small HTML page; real video files
-	// are always well above 1 MB.
-	if resp.ContentLength >= minVideoBytes {
-		slog.Debug("probed file size", "bytes", resp.ContentLength)
-		return resp.ContentLength
-	}
-	return 0
 }

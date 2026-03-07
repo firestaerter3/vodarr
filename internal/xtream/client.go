@@ -89,16 +89,23 @@ type VODInfo struct {
 }
 
 type VODInfoDetail struct {
-	TMDBId      FlexInt   `json:"tmdb_id"`
-	Name        string    `json:"name"`
-	Plot        string    `json:"plot"`
-	Cast        string    `json:"cast"`
-	Director    string    `json:"director"`
-	Genre       string    `json:"genre"`
-	ReleaseDate string    `json:"releasedate"`
-	Rating      FlexFloat `json:"rating"`
-	Duration    string    `json:"duration"`
-	Backdrop    []string  `json:"backdrop_path"`
+	TMDBId      FlexInt          `json:"tmdb_id"`
+	Name        string           `json:"name"`
+	Plot        string           `json:"plot"`
+	Cast        string           `json:"cast"`
+	Director    string           `json:"director"`
+	Genre       string           `json:"genre"`
+	ReleaseDate string           `json:"releasedate"`
+	Rating      FlexFloat        `json:"rating"`
+	Duration    string           `json:"duration"`
+	Backdrop    []string         `json:"backdrop_path"`
+	Bitrate     int              `json:"bitrate"`
+	Video       VODVideoInfo     `json:"video"`
+}
+
+// VODVideoInfo holds the video stream metadata returned by get_vod_info.
+type VODVideoInfo struct {
+	Tags map[string]string `json:"tags"`
 }
 
 // Series is a single TV series entry.
@@ -159,12 +166,21 @@ type Episode struct {
 }
 
 type EpisodeInfo struct {
-	TMDBId      FlexInt   `json:"tmdb_id"`
-	ReleaseDate string    `json:"releasedate"`
-	Plot        string    `json:"plot"`
-	Duration    string    `json:"duration"`
-	MovieImage  string    `json:"movie_image"`
-	Rating      FlexFloat `json:"rating"`
+	TMDBId       FlexInt           `json:"tmdb_id"`
+	ReleaseDate  string            `json:"releasedate"`
+	Plot         string            `json:"plot"`
+	Duration     string            `json:"duration"`
+	DurationSecs int               `json:"duration_secs"`
+	MovieImage   string            `json:"movie_image"`
+	Rating       FlexFloat         `json:"rating"`
+	Video        EpisodeVideoInfo  `json:"video"`
+}
+
+// EpisodeVideoInfo holds per-episode video stream metadata from get_series_info.
+// Tags is a freeform map; the key "NUMBER_OF_BYTES-eng" (or "NUMBER_OF_BYTES")
+// contains the exact file size in bytes when the provider includes it.
+type EpisodeVideoInfo struct {
+	Tags map[string]string `json:"tags"`
 }
 
 // Authenticate validates the credentials and returns server info.
@@ -336,6 +352,35 @@ func (c *Client) apiGet(ctx context.Context, action string, params url.Values, o
 	}
 
 	return fmt.Errorf("after 3 retries: %w", lastErr)
+}
+
+// EstimateMovieFileSize calls GetVODInfo and estimates the file size from
+// bitrate × duration. Returns 0 if the provider does not supply both fields.
+func (c *Client) EstimateMovieFileSize(ctx context.Context, streamID int) int64 {
+	info, err := c.GetVODInfo(ctx, streamID)
+	if err != nil || info == nil {
+		return 0
+	}
+	bitrate := int64(info.Info.Bitrate) // kbps
+	duration := parseDurationTag(info.Info.Video.Tags["DURATION"])
+	if bitrate <= 0 || duration <= 0 {
+		return 0
+	}
+	return bitrate * 1000 / 8 * duration
+}
+
+// parseDurationTag parses an ffprobe-style duration string such as
+// "02:50:00.148000000" or "00:50:09" and returns whole seconds.
+func parseDurationTag(s string) int64 {
+	s = strings.SplitN(s, ".", 2)[0] // strip sub-second fraction
+	parts := strings.Split(s, ":")
+	if len(parts) != 3 {
+		return 0
+	}
+	h, _ := strconv.Atoi(parts[0])
+	m, _ := strconv.Atoi(parts[1])
+	sec, _ := strconv.Atoi(parts[2])
+	return int64(h*3600 + m*60 + sec)
 }
 
 // sanitizeURL strips username and password query params from a URL string

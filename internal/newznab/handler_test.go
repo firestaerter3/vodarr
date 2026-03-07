@@ -1,6 +1,7 @@
 package newznab
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"net/http"
@@ -17,8 +18,9 @@ import (
 // exercise size probing.
 type noopURLBuilder struct{}
 
-func (noopURLBuilder) StreamURL(int, string) string      { return "" }
-func (noopURLBuilder) SeriesStreamURL(int, string) string { return "" }
+func (noopURLBuilder) StreamURL(int, string) string                              { return "" }
+func (noopURLBuilder) SeriesStreamURL(int, string) string                        { return "" }
+func (noopURLBuilder) EstimateMovieFileSize(context.Context, int) int64          { return 0 }
 
 func makeTestHandler() *Handler {
 	idx := index.New()
