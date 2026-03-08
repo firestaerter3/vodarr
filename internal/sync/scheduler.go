@@ -565,12 +565,12 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 							if ci.ReleaseDate != "" && item.ReleaseDate == "" {
 								item.ReleaseDate = ci.ReleaseDate
 							}
-							if ci.CanonicalName != "" {
+							if ci.CanonicalName != "" && item.Year != "" {
 								n := atomic.AddInt64(&progressN, 1)
 								s.setProgress("Enriching via TMDB", int(n), total)
 								continue
 							}
-							// CanonicalName empty: fall through to fetch it.
+							// CanonicalName or Year empty: fall through to fetch it.
 						}
 					}
 				}
@@ -613,10 +613,10 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 							}
 						}
 
-						// Fetch CanonicalName and RuntimeMins by ID when still missing
-						// (provider supplied TMDBId directly without a title search,
-						// e.g. Dutch VOD streams).
-						if item.CanonicalName == "" {
+						// Fetch CanonicalName, RuntimeMins, and Year by ID when still
+						// missing (provider supplied TMDBId directly without a title
+						// search, e.g. Dutch VOD streams, or cache predates Year).
+						if item.CanonicalName == "" || item.Year == "" {
 							var canonTitle string
 							var titleErr error
 							switch item.Type {
