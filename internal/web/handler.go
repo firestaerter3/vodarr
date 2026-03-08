@@ -1001,9 +1001,9 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 			}
 			indexer := map[string]interface{}{
 				"name":                    "VODarr",
-				"implementation":          "Newznab",
-				"implementationName":      "Newznab",
-				"configContract":          "NewznabSettings",
+				"implementation":          "Torznab",
+				"implementationName":      "Torznab",
+				"configContract":          "TorznabSettings",
 				"enableRss":               true,
 				"enableAutomaticSearch":   true,
 				"enableInteractiveSearch": true,
@@ -1016,8 +1016,6 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 					{"name": "apiPath", "value": "/api"},
 					{"name": "apiKey", "value": ""},
 					{"name": "categories", "value": categories},
-					{"name": "animeCategories", "value": []int{}},
-					{"name": "additionalParameters", "value": ""},
 				},
 			}
 			idxBody, _ := json.Marshal(indexer)
