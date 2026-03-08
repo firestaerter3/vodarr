@@ -493,15 +493,13 @@ export default function Settings() {
                     </div>
                   )}
 
-                  <div className="flex items-center gap-3 pt-1">
+                  <div className="flex items-center gap-3 pt-1 flex-wrap">
                     <TestButton
                       onClick={() => testArrInstance(inst.name, inst.url, inst.api_key)}
                       loading={arrTestSt.loading}
                       success={arrTestSt.success}
                       error={arrTestSt.error}
                     />
-                  </div>
-                  <div className="flex items-center gap-3">
                     <button
                       type="button"
                       onClick={() => handleArrSetup(inst.name)}
@@ -511,7 +509,7 @@ export default function Settings() {
                       {setupSt.loading ? 'Configuring…' : 'Auto-Configure'}
                     </button>
                     {setupSt.success && <span className="font-mono text-[12px] text-lime-400">✓ Done</span>}
-                    {setupSt.error && <span className="font-mono text-[12px] text-red-400">✗ {setupSt.error}</span>}
+                    {setupSt.error && <span className="font-mono text-[12px] text-red-400 break-all">✗ {setupSt.error}</span>}
                   </div>
                 </div>
               )

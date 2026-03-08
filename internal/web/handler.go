@@ -1009,6 +1009,7 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 				"enableInteractiveSearch": true,
 				"supportsRss":             true,
 				"supportsSearch":          true,
+				"priority":                1,
 				"tags":                    tags,
 				"fields": []map[string]interface{}{
 					{"name": "baseUrl", "value": newznabURL},
