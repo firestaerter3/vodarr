@@ -688,7 +688,7 @@ func (h *Handler) checkArrInstance(ctx context.Context, inst config.ArrInstance,
 		portStr := fmt.Sprintf(":%d", newznabPort)
 		if json.NewDecoder(idxResp.Body).Decode(&indexers) == nil {
 			for _, idx := range indexers {
-				if idx.Implementation != "Newznab" {
+				if idx.Implementation != "Newznab" && idx.Implementation != "Torznab" {
 					continue
 				}
 				for _, f := range idx.Fields {
@@ -925,7 +925,7 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 		indexerExists := false
 		if json.NewDecoder(idxListResp.Body).Decode(&indexers) == nil {
 			for _, idx := range indexers {
-				if idx.Implementation != "Newznab" {
+				if idx.Implementation != "Newznab" && idx.Implementation != "Torznab" {
 					continue
 				}
 				for _, f := range idx.Fields {
