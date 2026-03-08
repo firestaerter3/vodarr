@@ -815,7 +815,7 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 	webhookURL := h.webhookURL(r)
 
 	results := map[string]interface{}{}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	baseURL := strings.TrimRight(inst.URL, "/")
 
 	// Step 1: Configure importExtraFiles
