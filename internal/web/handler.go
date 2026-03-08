@@ -99,6 +99,7 @@ func (h *Handler) registerRoutes(staticFS fs.FS) {
 	h.mux.HandleFunc("POST /api/restart", auth(h.handleRestart))
 	h.mux.HandleFunc("GET /api/health", h.handleHealth)         // health always public
 	h.mux.HandleFunc("POST /api/webhook", h.handleWebhook)      // webhook always public (called by arr)
+	h.mux.HandleFunc("POST /api/arr/test", auth(h.handleArrTest))
 	h.mux.HandleFunc("GET /api/arr/status", auth(h.handleArrStatus))
 	h.mux.HandleFunc("POST /api/arr/setup", auth(h.handleArrSetup))
 
@@ -503,6 +504,56 @@ func (h *Handler) handleTestTVDB(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, map[string]interface{}{"success": true})
+}
+
+func (h *Handler) handleArrTest(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URL    string `json:"url"`
+		APIKey string `json:"api_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	h.cfgMu.RLock()
+	storedKey := ""
+	for _, inst := range h.cfg.Arr.Instances {
+		if inst.URL == req.URL {
+			storedKey = inst.APIKey
+			break
+		}
+	}
+	h.cfgMu.RUnlock()
+
+	apiKey := resolveSentinel(req.APIKey, storedKey)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	testURL := fmt.Sprintf("%s/api/v3/system/status", strings.TrimRight(req.URL, "/"))
+	testReq, _ := http.NewRequestWithContext(ctx, "GET", testURL, nil)
+	testReq.Header.Set("X-Api-Key", apiKey)
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(testReq)
+	if err != nil {
+		h.writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 401 {
+		h.writeJSON(w, map[string]interface{}{"success": false, "error": "invalid API key"})
+		return
+	}
+	if resp.StatusCode >= 300 {
+		h.writeJSON(w, map[string]interface{}{"success": false, "error": fmt.Sprintf("HTTP %d", resp.StatusCode)})
+		return
+	}
+	var status struct {
+		AppName string `json:"appName"`
+		Version string `json:"version"`
+	}
+	json.NewDecoder(resp.Body).Decode(&status)
+	h.writeJSON(w, map[string]interface{}{"success": true, "app": status.AppName, "version": status.Version})
 }
 
 func (h *Handler) handleRestart(w http.ResponseWriter, r *http.Request) {

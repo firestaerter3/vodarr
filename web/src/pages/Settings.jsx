@@ -125,6 +125,7 @@ export default function Settings() {
   const [tvdbTest, setTvdbTest] = useState({ loading: false, success: false, error: null })
 
   const [arrStatus, setArrStatus] = useState(null)
+  const [arrTestState, setArrTestState] = useState({}) // keyed by instance name
   const [arrSetupState, setArrSetupState] = useState({}) // keyed by instance name
 
   useEffect(() => {
@@ -166,6 +167,30 @@ export default function Settings() {
       )
       return { ...prev, arr: { instances } }
     })
+  }
+
+  const testArrInstance = async (name, url, apiKey) => {
+    setArrTestState(s => ({ ...s, [name]: { loading: true, success: false, error: null } }))
+    try {
+      const res = await fetch('/api/arr/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, api_key: apiKey }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setArrTestState(s => ({ ...s, [name]: { loading: false, success: true, error: null } }))
+        setTimeout(() => setArrTestState(s => ({ ...s, [name]: { ...s[name], success: false } })), 5000)
+        await saveConfig(buildPayload())
+        fetchArrStatus()
+      } else {
+        setArrTestState(s => ({ ...s, [name]: { loading: false, success: false, error: data.error || 'Connection failed' } }))
+        setTimeout(() => setArrTestState(s => ({ ...s, [name]: { ...s[name], error: null } })), 5000)
+      }
+    } catch (e) {
+      setArrTestState(s => ({ ...s, [name]: { loading: false, success: false, error: e.message } }))
+      setTimeout(() => setArrTestState(s => ({ ...s, [name]: { ...s[name], error: null } })), 5000)
+    }
   }
 
   const handleArrSetup = async name => {
@@ -395,10 +420,11 @@ export default function Settings() {
         <div className="animate-fade-up animate-fade-up-2">
           <Section title="Arr Integration">
             <p className="font-mono text-[11px] text-steel-500">
-              Connect Sonarr/Radarr instances. VODarr can auto-configure Import Extra Files and register a webhook to clean up .mkv stubs after import.
+              Connect Sonarr/Radarr instances. Test the connection first, then use Auto-Configure to register the indexer, download client, webhook, and Import Extra Files in one click.
             </p>
             {(cfg.arr?.instances || []).map((inst, idx) => {
               const statusInst = arrStatus?.instances?.find(s => s.name === inst.name)
+              const arrTestSt = arrTestState[inst.name] || {}
               const setupSt = arrSetupState[inst.name] || {}
               const apiOk = statusInst?.reachable === true
               const apiFail = statusInst?.reachable === false
@@ -468,17 +494,23 @@ export default function Settings() {
                   )}
 
                   <div className="flex items-center gap-3 pt-1">
+                    <TestButton
+                      onClick={() => testArrInstance(inst.name, inst.url, inst.api_key)}
+                      loading={arrTestSt.loading}
+                      success={arrTestSt.success}
+                      error={arrTestSt.error}
+                    />
+                  </div>
+                  <div className="flex items-center gap-3">
                     <button
                       type="button"
                       onClick={() => handleArrSetup(inst.name)}
-                      disabled={setupSt.loading || !inst.name || !inst.url || (arrStatus !== null && !statusInst)}
+                      disabled={setupSt.loading || !apiOk}
                       className="px-4 py-1.5 bg-void-600 border border-void-500 text-steel-400 rounded font-mono text-[12px] hover:bg-void-500 hover:text-steel-300 transition-all disabled:opacity-40"
                     >
                       {setupSt.loading ? 'Configuring…' : 'Auto-Configure'}
                     </button>
-                    {arrStatus !== null && !statusInst && inst.name && inst.url && (
-                      <span className="font-mono text-[11px] text-steel-500">Save configuration first</span>
-                    )}
+                    {setupSt.success && <span className="font-mono text-[12px] text-lime-400">✓ Done</span>}
                     {setupSt.error && <span className="font-mono text-[12px] text-red-400">✗ {setupSt.error}</span>}
                   </div>
                 </div>
