@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -579,13 +580,15 @@ func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 // arrInstanceStatus is the per-instance result from GET /api/arr/status.
 type arrInstanceStatus struct {
-	Name              string   `json:"name"`
-	Type              string   `json:"type"`
-	Reachable         bool     `json:"reachable"`
-	ImportExtraFiles  bool     `json:"importExtraFiles"`
-	ExtraFileExts     string   `json:"extraFileExtensions"`
-	WebhookConfigured bool     `json:"webhookConfigured"`
-	Issues            []string `json:"issues"`
+	Name                    string   `json:"name"`
+	Type                    string   `json:"type"`
+	Reachable               bool     `json:"reachable"`
+	ImportExtraFiles        bool     `json:"importExtraFiles"`
+	ExtraFileExts           string   `json:"extraFileExtensions"`
+	WebhookConfigured       bool     `json:"webhookConfigured"`
+	IndexerConfigured       bool     `json:"indexerConfigured"`
+	DownloadClientConfigured bool    `json:"downloadClientConfigured"`
+	Issues                  []string `json:"issues"`
 }
 
 func (h *Handler) handleArrStatus(w http.ResponseWriter, r *http.Request) {
@@ -596,12 +599,12 @@ func (h *Handler) handleArrStatus(w http.ResponseWriter, r *http.Request) {
 	webhookURL := h.webhookURL(r)
 	results := make([]arrInstanceStatus, 0, len(cfg.Arr.Instances))
 	for _, inst := range cfg.Arr.Instances {
-		results = append(results, h.checkArrInstance(r.Context(), inst, webhookURL))
+		results = append(results, h.checkArrInstance(r.Context(), inst, webhookURL, cfg.Server.NewznabPort, cfg.Server.QbitPort))
 	}
 	h.writeJSON(w, map[string]interface{}{"instances": results})
 }
 
-func (h *Handler) checkArrInstance(ctx context.Context, inst config.ArrInstance, webhookURL string) arrInstanceStatus {
+func (h *Handler) checkArrInstance(ctx context.Context, inst config.ArrInstance, webhookURL string, newznabPort, qbitPort int) arrInstanceStatus {
 	st := arrInstanceStatus{Name: inst.Name, Type: inst.Type, Issues: []string{}}
 
 	// Check media management settings
@@ -666,6 +669,65 @@ func (h *Handler) checkArrInstance(ctx context.Context, inst config.ArrInstance,
 		}
 		if !st.WebhookConfigured {
 			st.Issues = append(st.Issues, "webhook Connection not configured")
+		}
+	}
+
+	// Check indexer registration
+	idxURL := fmt.Sprintf("%s/api/v3/indexer", strings.TrimRight(inst.URL, "/"))
+	idxReq, _ := http.NewRequestWithContext(ctx, "GET", idxURL, nil)
+	idxReq.Header.Set("X-Api-Key", inst.APIKey)
+	if idxResp, err := client.Do(idxReq); err == nil {
+		defer idxResp.Body.Close()
+		var indexers []struct {
+			Implementation string `json:"implementation"`
+			Fields         []struct {
+				Name  string      `json:"name"`
+				Value interface{} `json:"value"`
+			} `json:"fields"`
+		}
+		portStr := fmt.Sprintf(":%d", newznabPort)
+		if json.NewDecoder(idxResp.Body).Decode(&indexers) == nil {
+			for _, idx := range indexers {
+				if idx.Implementation != "Newznab" {
+					continue
+				}
+				for _, f := range idx.Fields {
+					if f.Name == "baseUrl" {
+						if u, ok := f.Value.(string); ok && strings.Contains(u, portStr) {
+							st.IndexerConfigured = true
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Check download client registration
+	dcURL := fmt.Sprintf("%s/api/v3/downloadclient", strings.TrimRight(inst.URL, "/"))
+	dcReq, _ := http.NewRequestWithContext(ctx, "GET", dcURL, nil)
+	dcReq.Header.Set("X-Api-Key", inst.APIKey)
+	if dcResp, err := client.Do(dcReq); err == nil {
+		defer dcResp.Body.Close()
+		var dcs []struct {
+			Implementation string `json:"implementation"`
+			Fields         []struct {
+				Name  string      `json:"name"`
+				Value interface{} `json:"value"`
+			} `json:"fields"`
+		}
+		if json.NewDecoder(dcResp.Body).Decode(&dcs) == nil {
+			for _, dc := range dcs {
+				if dc.Implementation != "QBittorrent" {
+					continue
+				}
+				for _, f := range dc.Fields {
+					if f.Name == "port" {
+						if v, ok := f.Value.(float64); ok && int(v) == qbitPort {
+							st.DownloadClientConfigured = true
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -842,6 +904,171 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Step 4: Register indexer
+	indexerListURL := fmt.Sprintf("%s/api/v3/indexer", baseURL)
+	idxListReq, _ := http.NewRequestWithContext(r.Context(), "GET", indexerListURL, nil)
+	idxListReq.Header.Set("X-Api-Key", inst.APIKey)
+	idxListResp, err := client.Do(idxListReq)
+	if err != nil {
+		results["indexer"] = map[string]interface{}{"success": false, "error": err.Error()}
+	} else {
+		defer idxListResp.Body.Close()
+		var indexers []struct {
+			Implementation string `json:"implementation"`
+			Fields         []struct {
+				Name  string      `json:"name"`
+				Value interface{} `json:"value"`
+			} `json:"fields"`
+		}
+		newznabURL := h.newznabBaseURL(r, cfg.Server.NewznabPort)
+		portStr := fmt.Sprintf(":%d", cfg.Server.NewznabPort)
+		indexerExists := false
+		if json.NewDecoder(idxListResp.Body).Decode(&indexers) == nil {
+			for _, idx := range indexers {
+				if idx.Implementation != "Newznab" {
+					continue
+				}
+				for _, f := range idx.Fields {
+					if f.Name == "baseUrl" {
+						if u, ok := f.Value.(string); ok && strings.Contains(u, portStr) {
+							indexerExists = true
+						}
+					}
+				}
+			}
+		}
+		if indexerExists {
+			results["indexer"] = map[string]interface{}{"success": true, "skipped": "already configured"}
+		} else {
+			categories := []int{5000}
+			if inst.Type == "radarr" {
+				categories = []int{2000}
+			}
+			tags := []int{}
+			if tagID >= 0 {
+				tags = []int{tagID}
+			}
+			indexer := map[string]interface{}{
+				"name":                    "VODarr",
+				"implementation":          "Newznab",
+				"implementationName":      "Newznab",
+				"configContract":          "NewznabSettings",
+				"enableRss":               true,
+				"enableAutomaticSearch":   true,
+				"enableInteractiveSearch": true,
+				"supportsRss":             true,
+				"supportsSearch":          true,
+				"tags":                    tags,
+				"fields": []map[string]interface{}{
+					{"name": "baseUrl", "value": newznabURL},
+					{"name": "apiPath", "value": "/api"},
+					{"name": "apiKey", "value": ""},
+					{"name": "categories", "value": categories},
+					{"name": "animeCategories", "value": []int{}},
+					{"name": "additionalParameters", "value": ""},
+				},
+			}
+			idxBody, _ := json.Marshal(indexer)
+			idxPostReq, _ := http.NewRequestWithContext(r.Context(), "POST", indexerListURL, bytes.NewReader(idxBody))
+			idxPostReq.Header.Set("X-Api-Key", inst.APIKey)
+			idxPostReq.Header.Set("Content-Type", "application/json")
+			idxPostResp, err := client.Do(idxPostReq)
+			if err != nil {
+				results["indexer"] = map[string]interface{}{"success": false, "error": err.Error()}
+			} else {
+				idxRespBody, _ := io.ReadAll(idxPostResp.Body)
+				idxPostResp.Body.Close()
+				if idxPostResp.StatusCode < 300 {
+					results["indexer"] = map[string]interface{}{"success": true}
+				} else {
+					results["indexer"] = map[string]interface{}{"success": false, "error": fmt.Sprintf("HTTP %d: %s", idxPostResp.StatusCode, strings.TrimSpace(string(idxRespBody)))}
+				}
+			}
+		}
+	}
+
+	// Step 5: Register download client
+	dcListURL := fmt.Sprintf("%s/api/v3/downloadclient", baseURL)
+	dcListReq, _ := http.NewRequestWithContext(r.Context(), "GET", dcListURL, nil)
+	dcListReq.Header.Set("X-Api-Key", inst.APIKey)
+	dcListResp, err := client.Do(dcListReq)
+	if err != nil {
+		results["downloadClient"] = map[string]interface{}{"success": false, "error": err.Error()}
+	} else {
+		defer dcListResp.Body.Close()
+		var dcs []struct {
+			Implementation string `json:"implementation"`
+			Fields         []struct {
+				Name  string      `json:"name"`
+				Value interface{} `json:"value"`
+			} `json:"fields"`
+		}
+		dcExists := false
+		if json.NewDecoder(dcListResp.Body).Decode(&dcs) == nil {
+			for _, dc := range dcs {
+				if dc.Implementation != "QBittorrent" {
+					continue
+				}
+				for _, f := range dc.Fields {
+					if f.Name == "port" {
+						if v, ok := f.Value.(float64); ok && int(v) == cfg.Server.QbitPort {
+							dcExists = true
+						}
+					}
+				}
+			}
+		}
+		if dcExists {
+			results["downloadClient"] = map[string]interface{}{"success": true, "skipped": "already configured"}
+		} else {
+			qbitHostname := h.requestHost(r)
+			tags := []int{}
+			if tagID >= 0 {
+				tags = []int{tagID}
+			}
+			dc := map[string]interface{}{
+				"name":               "VODarr",
+				"implementation":     "QBittorrent",
+				"implementationName": "qBittorrent",
+				"configContract":     "QBittorrentSettings",
+				"enable":             true,
+				"protocol":           "torrent",
+				"priority":           1,
+				"tags":               tags,
+				"fields": []map[string]interface{}{
+					{"name": "host", "value": qbitHostname},
+					{"name": "port", "value": cfg.Server.QbitPort},
+					{"name": "useSsl", "value": false},
+					{"name": "urlBase", "value": ""},
+					{"name": "username", "value": ""},
+					{"name": "password", "value": ""},
+					{"name": "category", "value": "vodarr"},
+					{"name": "recentTvPriority", "value": 0},
+					{"name": "olderTvPriority", "value": 0},
+					{"name": "initialState", "value": 0},
+					{"name": "sequentialOrder", "value": false},
+					{"name": "firstAndLast", "value": false},
+				},
+			}
+			dcBody, _ := json.Marshal(dc)
+			dcPostReq, _ := http.NewRequestWithContext(r.Context(), "POST", dcListURL, bytes.NewReader(dcBody))
+			dcPostReq.Header.Set("X-Api-Key", inst.APIKey)
+			dcPostReq.Header.Set("Content-Type", "application/json")
+			dcPostResp, err := client.Do(dcPostReq)
+			if err != nil {
+				results["downloadClient"] = map[string]interface{}{"success": false, "error": err.Error()}
+			} else {
+				dcRespBody, _ := io.ReadAll(dcPostResp.Body)
+				dcPostResp.Body.Close()
+				if dcPostResp.StatusCode < 300 {
+					results["downloadClient"] = map[string]interface{}{"success": true}
+				} else {
+					results["downloadClient"] = map[string]interface{}{"success": false, "error": fmt.Sprintf("HTTP %d: %s", dcPostResp.StatusCode, strings.TrimSpace(string(dcRespBody)))}
+				}
+			}
+		}
+	}
+
 	h.writeJSON(w, results)
 }
 
@@ -897,6 +1124,29 @@ func (h *Handler) webhookURL(r *http.Request) string {
 		scheme = "https"
 	}
 	return scheme + "://" + r.Host
+}
+
+// newznabBaseURL returns the base URL for the VODarr Newznab indexer,
+// using the hostname from the request and the configured newznab port.
+func (h *Handler) newznabBaseURL(r *http.Request, port int) string {
+	hostname := r.Host
+	if host, _, err := net.SplitHostPort(hostname); err == nil {
+		hostname = host
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s:%d", scheme, hostname, port)
+}
+
+// requestHost returns just the hostname (no port) from the request's Host header.
+func (h *Handler) requestHost(r *http.Request) string {
+	hostname := r.Host
+	if host, _, err := net.SplitHostPort(hostname); err == nil {
+		return host
+	}
+	return hostname
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {

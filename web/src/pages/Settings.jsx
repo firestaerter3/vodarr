@@ -169,7 +169,7 @@ export default function Settings() {
   }
 
   const handleArrSetup = async name => {
-    if (!window.confirm(`This will enable Import Extra Files (.strm) and register a webhook Connection in "${name}". Proceed?`)) return
+    if (!window.confirm(`This will enable Import Extra Files (.strm), register a webhook, indexer, and download client in "${name}". Proceed?`)) return
     setArrSetupState(s => ({ ...s, [name]: { loading: true, error: null, success: false } }))
     try {
       const res = await fetch('/api/arr/setup', {
@@ -451,6 +451,18 @@ export default function Settings() {
                         ok={webhookOk}
                         fail={!webhookOk && apiOk}
                         failMsg={statusInst.issues.filter(i => !i.startsWith('unreachable')).join(' · ')}
+                      />
+                      <StatusRow
+                        label="Indexer registered"
+                        ok={statusInst?.indexerConfigured}
+                        fail={!statusInst?.indexerConfigured && apiOk}
+                        failMsg="VODarr indexer not registered"
+                      />
+                      <StatusRow
+                        label="Download client"
+                        ok={statusInst?.downloadClientConfigured}
+                        fail={!statusInst?.downloadClientConfigured && apiOk}
+                        failMsg="VODarr download client not registered"
                       />
                     </div>
                   )}
