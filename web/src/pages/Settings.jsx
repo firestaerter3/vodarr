@@ -471,11 +471,14 @@ export default function Settings() {
                     <button
                       type="button"
                       onClick={() => handleArrSetup(inst.name)}
-                      disabled={setupSt.loading || !inst.name || !inst.url}
+                      disabled={setupSt.loading || !inst.name || !inst.url || (arrStatus !== null && !statusInst)}
                       className="px-4 py-1.5 bg-void-600 border border-void-500 text-steel-400 rounded font-mono text-[12px] hover:bg-void-500 hover:text-steel-300 transition-all disabled:opacity-40"
                     >
                       {setupSt.loading ? 'Configuring…' : 'Auto-Configure'}
                     </button>
+                    {arrStatus !== null && !statusInst && inst.name && inst.url && (
+                      <span className="font-mono text-[11px] text-steel-500">Save configuration first</span>
+                    )}
                     {setupSt.error && <span className="font-mono text-[12px] text-red-400">✗ {setupSt.error}</span>}
                   </div>
                 </div>
