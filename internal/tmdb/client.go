@@ -222,10 +222,11 @@ func (c *Client) GetTVExternalIDs(ctx context.Context, tmdbID int) (*ExternalIDs
 	return &ids, nil
 }
 
-// MovieDetails holds the title and runtime for a movie.
+// MovieDetails holds the title, runtime, and release date for a movie.
 type MovieDetails struct {
 	Title       string
 	RuntimeMins int
+	ReleaseDate string
 }
 
 // GetMovieDetails fetches the English title and runtime (minutes) for a movie by TMDB ID.
@@ -240,8 +241,9 @@ func (c *Client) GetMovieDetails(ctx context.Context, tmdbID int) (*MovieDetails
 	}
 
 	var raw struct {
-		Title   string `json:"title"`
-		Runtime int    `json:"runtime"`
+		Title       string `json:"title"`
+		Runtime     int    `json:"runtime"`
+		ReleaseDate string `json:"release_date"`
 	}
 	if err := c.get(ctx, fmt.Sprintf("/movie/%d", tmdbID), nil, &raw); err != nil {
 		if errors.Is(err, errNotFound) {
@@ -249,7 +251,7 @@ func (c *Client) GetMovieDetails(ctx context.Context, tmdbID int) (*MovieDetails
 		}
 		return nil, fmt.Errorf("movie details %d: %w", tmdbID, err)
 	}
-	details := &MovieDetails{Title: raw.Title, RuntimeMins: raw.Runtime}
+	details := &MovieDetails{Title: raw.Title, RuntimeMins: raw.Runtime, ReleaseDate: raw.ReleaseDate}
 	c.cachePut(key, details)
 	return details, nil
 }

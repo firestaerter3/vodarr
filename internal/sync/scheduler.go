@@ -559,6 +559,12 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 							item.TMDBId = ci.TMDBId
 							item.CanonicalName = ci.CanonicalName
 							item.RuntimeMins = ci.RuntimeMins
+							if ci.Year != "" && item.Year == "" {
+								item.Year = ci.Year
+							}
+							if ci.ReleaseDate != "" && item.ReleaseDate == "" {
+								item.ReleaseDate = ci.ReleaseDate
+							}
 							if ci.CanonicalName != "" {
 								n := atomic.AddInt64(&progressN, 1)
 								s.setProgress("Enriching via TMDB", int(n), total)
@@ -620,6 +626,12 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 								if movieDetails != nil {
 									canonTitle = movieDetails.Title
 									item.RuntimeMins = movieDetails.RuntimeMins
+									if item.ReleaseDate == "" && movieDetails.ReleaseDate != "" {
+										item.ReleaseDate = movieDetails.ReleaseDate
+									}
+									if item.Year == "" && len(movieDetails.ReleaseDate) >= 4 {
+										item.Year = movieDetails.ReleaseDate[:4]
+									}
 								}
 							case index.TypeSeries:
 								canonTitle, titleErr = s.tmdb.GetTVTitle(ctx, tmdbID)
@@ -731,6 +743,12 @@ func (s *Scheduler) resolveByTitle(ctx context.Context, item *index.Item) error 
 			if result.Title != "" {
 				item.CanonicalName = result.Title
 			}
+			if item.ReleaseDate == "" && result.ReleaseDate != "" {
+				item.ReleaseDate = result.ReleaseDate
+			}
+			if item.Year == "" && len(result.ReleaseDate) >= 4 {
+				item.Year = result.ReleaseDate[:4]
+			}
 		}
 	case index.TypeSeries:
 		result, err := s.tmdb.SearchTV(ctx, title, year)
@@ -748,6 +766,12 @@ func (s *Scheduler) resolveByTitle(ctx context.Context, item *index.Item) error 
 			item.TMDBId = strconv.Itoa(result.ID)
 			if result.Name != "" {
 				item.CanonicalName = result.Name
+			}
+			if item.ReleaseDate == "" && result.FirstAirDate != "" {
+				item.ReleaseDate = result.FirstAirDate
+			}
+			if item.Year == "" && len(result.FirstAirDate) >= 4 {
+				item.Year = result.FirstAirDate[:4]
 			}
 		}
 	}
