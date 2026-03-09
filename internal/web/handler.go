@@ -97,8 +97,8 @@ func (h *Handler) registerRoutes(staticFS fs.FS) {
 	h.mux.HandleFunc("POST /api/test-tmdb", auth(h.handleTestTMDB))
 	h.mux.HandleFunc("POST /api/test-tvdb", auth(h.handleTestTVDB))
 	h.mux.HandleFunc("POST /api/restart", auth(h.handleRestart))
-	h.mux.HandleFunc("GET /api/health", h.handleHealth)         // health always public
-	h.mux.HandleFunc("POST /api/webhook", h.handleWebhook)      // webhook always public (called by arr)
+	h.mux.HandleFunc("GET /api/health", h.handleHealth)    // health always public
+	h.mux.HandleFunc("POST /api/webhook", h.handleWebhook) // webhook always public (called by arr)
 	h.mux.HandleFunc("POST /api/arr/test", auth(h.handleArrTest))
 	h.mux.HandleFunc("GET /api/arr/status", auth(h.handleArrStatus))
 	h.mux.HandleFunc("POST /api/arr/setup", auth(h.handleArrSetup))
@@ -631,15 +631,15 @@ func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 // arrInstanceStatus is the per-instance result from GET /api/arr/status.
 type arrInstanceStatus struct {
-	Name                    string   `json:"name"`
-	Type                    string   `json:"type"`
-	Reachable               bool     `json:"reachable"`
-	ImportExtraFiles        bool     `json:"importExtraFiles"`
-	ExtraFileExts           string   `json:"extraFileExtensions"`
-	WebhookConfigured       bool     `json:"webhookConfigured"`
-	IndexerConfigured       bool     `json:"indexerConfigured"`
-	DownloadClientConfigured bool    `json:"downloadClientConfigured"`
-	Issues                  []string `json:"issues"`
+	Name                     string   `json:"name"`
+	Type                     string   `json:"type"`
+	Reachable                bool     `json:"reachable"`
+	ImportExtraFiles         bool     `json:"importExtraFiles"`
+	ExtraFileExts            string   `json:"extraFileExtensions"`
+	WebhookConfigured        bool     `json:"webhookConfigured"`
+	IndexerConfigured        bool     `json:"indexerConfigured"`
+	DownloadClientConfigured bool     `json:"downloadClientConfigured"`
+	Issues                   []string `json:"issues"`
 }
 
 func (h *Handler) handleArrStatus(w http.ResponseWriter, r *http.Request) {
@@ -698,7 +698,7 @@ func (h *Handler) checkArrInstance(ctx context.Context, inst config.ArrInstance,
 			var notifications []struct {
 				Implementation string `json:"implementation"`
 				Fields         []struct {
-					Name  string `json:"name"`
+					Name  string      `json:"name"`
 					Value interface{} `json:"value"`
 				} `json:"fields"`
 				OnDownload bool `json:"onDownload"`
@@ -898,36 +898,36 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 				tags = []int{tagID}
 			}
 			notif := map[string]interface{}{
-				"name":                        "VODarr Cleanup",
-				"implementation":              "Webhook",
-				"implementationName":          "Webhook",
-				"configContract":              "WebhookSettings",
-				"onGrab":                      false,
-				"onDownload":                  true,
-				"onUpgrade":                   true,
-				"onRename":                    false,
-				"onSeriesAdd":                 false,
-				"onSeriesDelete":              false,
-				"onEpisodeFileDelete":         false,
-				"onEpisodeFileDeleteForUpgrade": false,
-				"onHealthIssue":               false,
-				"onHealthRestored":            false,
-				"onApplicationUpdate":         false,
-				"onManualInteractionRequired": false,
-				"supportsOnGrab":              false,
-				"supportsOnDownload":          true,
-				"supportsOnUpgrade":           true,
-				"supportsOnRename":            false,
-				"supportsOnSeriesAdd":         false,
-				"supportsOnSeriesDelete":      false,
-				"supportsOnEpisodeFileDelete": false,
+				"name":                                  "VODarr Cleanup",
+				"implementation":                        "Webhook",
+				"implementationName":                    "Webhook",
+				"configContract":                        "WebhookSettings",
+				"onGrab":                                false,
+				"onDownload":                            true,
+				"onUpgrade":                             true,
+				"onRename":                              false,
+				"onSeriesAdd":                           false,
+				"onSeriesDelete":                        false,
+				"onEpisodeFileDelete":                   false,
+				"onEpisodeFileDeleteForUpgrade":         false,
+				"onHealthIssue":                         false,
+				"onHealthRestored":                      false,
+				"onApplicationUpdate":                   false,
+				"onManualInteractionRequired":           false,
+				"supportsOnGrab":                        false,
+				"supportsOnDownload":                    true,
+				"supportsOnUpgrade":                     true,
+				"supportsOnRename":                      false,
+				"supportsOnSeriesAdd":                   false,
+				"supportsOnSeriesDelete":                false,
+				"supportsOnEpisodeFileDelete":           false,
 				"supportsOnEpisodeFileDeleteForUpgrade": false,
-				"supportsOnHealthIssue":       false,
-				"supportsOnHealthRestored":    false,
-				"supportsOnApplicationUpdate": false,
-				"supportsOnManualInteractionRequired": false,
-				"includeHealthWarnings":       false,
-				"tags":                        tags,
+				"supportsOnHealthIssue":                 false,
+				"supportsOnHealthRestored":              false,
+				"supportsOnApplicationUpdate":           false,
+				"supportsOnManualInteractionRequired":   false,
+				"includeHealthWarnings":                 false,
+				"tags":                                  tags,
 				"fields": []map[string]interface{}{
 					{"name": "url", "value": webhookURL + "/api/webhook"},
 					{"name": "method", "value": 1},
@@ -1037,12 +1037,15 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 	dcListURL := fmt.Sprintf("%s/api/v3/downloadclient", baseURL)
 	dcListReq, _ := http.NewRequestWithContext(r.Context(), "GET", dcListURL, nil)
 	dcListReq.Header.Set("X-Api-Key", inst.APIKey)
+	vodarrDownloadClientID := -1
 	dcListResp, err := client.Do(dcListReq)
 	if err != nil {
 		results["downloadClient"] = map[string]interface{}{"success": false, "error": err.Error()}
 	} else {
 		defer dcListResp.Body.Close()
 		var dcs []struct {
+			ID             int    `json:"id"`
+			Name           string `json:"name"`
 			Implementation string `json:"implementation"`
 			Fields         []struct {
 				Name  string      `json:"name"`
@@ -1055,11 +1058,18 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 				if dc.Implementation != "QBittorrent" {
 					continue
 				}
+				portMatches := false
 				for _, f := range dc.Fields {
 					if f.Name == "port" {
 						if v, ok := f.Value.(float64); ok && int(v) == cfg.Server.QbitPort {
-							dcExists = true
+							portMatches = true
 						}
+					}
+				}
+				if portMatches {
+					dcExists = true
+					if vodarrDownloadClientID < 0 || strings.EqualFold(dc.Name, "VODarr") {
+						vodarrDownloadClientID = dc.ID
 					}
 				}
 			}
@@ -1068,10 +1078,6 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 			results["downloadClient"] = map[string]interface{}{"success": true, "skipped": "already configured"}
 		} else {
 			qbitHostname := h.requestHost(r)
-			tags := []int{}
-			if tagID >= 0 {
-				tags = []int{tagID}
-			}
 			dc := map[string]interface{}{
 				"name":               "VODarr",
 				"implementation":     "QBittorrent",
@@ -1080,7 +1086,7 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 				"enable":             true,
 				"protocol":           "torrent",
 				"priority":           1,
-				"tags":               tags,
+				"tags":               []int{},
 				"fields": []map[string]interface{}{
 					{"name": "host", "value": qbitHostname},
 					{"name": "port", "value": cfg.Server.QbitPort},
@@ -1107,12 +1113,92 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 				dcRespBody, _ := io.ReadAll(dcPostResp.Body)
 				dcPostResp.Body.Close()
 				if dcPostResp.StatusCode < 300 {
+					var created struct {
+						ID int `json:"id"`
+					}
+					if json.Unmarshal(dcRespBody, &created) == nil && created.ID > 0 {
+						vodarrDownloadClientID = created.ID
+					}
 					results["downloadClient"] = map[string]interface{}{"success": true}
 				} else {
 					results["downloadClient"] = map[string]interface{}{"success": false, "error": fmt.Sprintf("HTTP %d: %s", dcPostResp.StatusCode, strings.TrimSpace(string(dcRespBody)))}
 				}
 			}
 		}
+	}
+
+	// Step 6: Bind the VODarr indexer to the VODarr download client.
+	if vodarrDownloadClientID > 0 {
+		idxBindReq, _ := http.NewRequestWithContext(r.Context(), "GET", indexerListURL, nil)
+		idxBindReq.Header.Set("X-Api-Key", inst.APIKey)
+		idxBindResp, err := client.Do(idxBindReq)
+		if err != nil {
+			results["indexerBinding"] = map[string]interface{}{"success": false, "error": err.Error()}
+		} else {
+			defer idxBindResp.Body.Close()
+			var indexers []map[string]interface{}
+			if err := json.NewDecoder(idxBindResp.Body).Decode(&indexers); err != nil {
+				results["indexerBinding"] = map[string]interface{}{"success": false, "error": "failed to parse indexer list"}
+			} else {
+				bound := false
+				newznabPort := fmt.Sprintf(":%d", cfg.Server.NewznabPort)
+				for _, idx := range indexers {
+					impl, _ := idx["implementation"].(string)
+					if impl != "Newznab" && impl != "Torznab" {
+						continue
+					}
+					fields, _ := idx["fields"].([]interface{})
+					isVodarrIndexer := false
+					for _, raw := range fields {
+						field, _ := raw.(map[string]interface{})
+						if field == nil {
+							continue
+						}
+						if field["name"] == "baseUrl" {
+							if u, ok := field["value"].(string); ok && strings.Contains(u, newznabPort) {
+								isVodarrIndexer = true
+								break
+							}
+						}
+					}
+					if !isVodarrIndexer {
+						continue
+					}
+
+					idx["downloadClientId"] = vodarrDownloadClientID
+					idx["tags"] = []int{}
+
+					idFloat, ok := idx["id"].(float64)
+					if !ok || idFloat <= 0 {
+						continue
+					}
+					updateURL := fmt.Sprintf("%s/api/v3/indexer/%d", baseURL, int(idFloat))
+					body, _ := json.Marshal(idx)
+					upReq, _ := http.NewRequestWithContext(r.Context(), "PUT", updateURL, bytes.NewReader(body))
+					upReq.Header.Set("X-Api-Key", inst.APIKey)
+					upReq.Header.Set("Content-Type", "application/json")
+					upResp, err := client.Do(upReq)
+					if err != nil {
+						results["indexerBinding"] = map[string]interface{}{"success": false, "error": err.Error()}
+						break
+					}
+					upRespBody, _ := io.ReadAll(upResp.Body)
+					upResp.Body.Close()
+					if upResp.StatusCode >= 300 {
+						results["indexerBinding"] = map[string]interface{}{"success": false, "error": fmt.Sprintf("HTTP %d: %s", upResp.StatusCode, strings.TrimSpace(string(upRespBody)))}
+						break
+					}
+					bound = true
+				}
+				if bound {
+					results["indexerBinding"] = map[string]interface{}{"success": true}
+				} else if _, exists := results["indexerBinding"]; !exists {
+					results["indexerBinding"] = map[string]interface{}{"success": false, "error": "VODarr indexer not found"}
+				}
+			}
+		}
+	} else {
+		results["indexerBinding"] = map[string]interface{}{"success": false, "error": "VODarr download client not found"}
 	}
 
 	h.writeJSON(w, results)
