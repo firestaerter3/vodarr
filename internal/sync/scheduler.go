@@ -61,6 +61,24 @@ func extractTrailingYear(name string) string {
 	return ""
 }
 
+// extractNameYear extracts a trailing 4-digit year from a raw IPTV stream
+// name after stripping IPTV prefixes and quality/language markers (HEVC, 4K,
+// DOLBY, NL GESPROKEN, user patterns).  Unlike cleanTitleForSearch it does NOT
+// strip year patterns — it strips only the noise that follows the year, so
+// that extractTrailingYear can find it at the end of the string.
+// Returns "" if no trailing year pattern is present.
+func extractNameYear(name string, patterns []*regexp.Regexp) string {
+	title := iptvPrefixRe.ReplaceAllString(name, "")
+	title = hevcRe.ReplaceAllString(title, "")
+	title = fourKRe.ReplaceAllString(title, "")
+	title = dolbyRe.ReplaceAllString(title, "")
+	title = nlGespokenRe.ReplaceAllString(title, "")
+	for _, re := range patterns {
+		title = re.ReplaceAllString(title, "")
+	}
+	return extractTrailingYear(strings.TrimSpace(title))
+}
+
 // cleanTitleForSearch strips IPTV prefixes, quality/language markers, trailing
 // year noise, and user-defined patterns from a stream name before passing it
 // to TMDB search.  Quality markers (HEVC, 4K, DOLBY) are stripped first so

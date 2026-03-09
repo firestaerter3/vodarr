@@ -184,6 +184,73 @@ func TestExtractTrailingYearAllPatterns(t *testing.T) {
 	}
 }
 
+func TestExtractNameYear(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "dash year after quality marker",
+			input: "┃NL┃ Ghostbusters - 2016 [DOLBY]",
+			want:  "2016",
+		},
+		{
+			name:  "dash year after 4K marker",
+			input: "┃NL┃ Avengers: Endgame - 2019 4K",
+			want:  "2019",
+		},
+		{
+			name:  "dash year after HEVC marker",
+			input: "┃NL┃ Inception - 2010 HEVC",
+			want:  "2010",
+		},
+		{
+			name:  "parens year",
+			input: "┃NL┃ Some Movie (2021)",
+			want:  "2021",
+		},
+		{
+			name:  "bracket year",
+			input: "┃NL┃ Some Movie [2021]",
+			want:  "2021",
+		},
+		{
+			name:  "year embedded in title (Blade Runner 2049) — no trailing pattern",
+			input: "┃NL┃ Blade Runner 2049",
+			want:  "",
+		},
+		{
+			name:  "year embedded in title (1917) — no trailing pattern",
+			input: "┃NL┃ 1917",
+			want:  "",
+		},
+		{
+			name:  "Fear Street 1994 with release year in parens — release year wins",
+			input: "┃NL┃ Fear Street: 1994 (2021)",
+			want:  "2021",
+		},
+		{
+			name:  "no year at all",
+			input: "┃NL┃ Scarface",
+			want:  "",
+		},
+		{
+			name:  "plain name no prefix",
+			input: "The Matrix - 1999",
+			want:  "1999",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractNameYear(tc.input, nil)
+			if got != tc.want {
+				t.Errorf("extractNameYear(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCleanTitleQualityMarkers(t *testing.T) {
 	cases := []struct {
 		input string
