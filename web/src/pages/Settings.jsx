@@ -422,6 +422,9 @@ export default function Settings() {
             <p className="font-mono text-[11px] text-steel-500">
               Connect Sonarr/Radarr instances. Test the connection first, then use Auto-Configure to register the indexer, download client, webhook, and Import Extra Files in one click.
             </p>
+            <p className="font-mono text-[11px] text-steel-500/90">
+              Auto-Configure usually takes about 30-90 seconds. If Arr is busy validating indexers, it can take up to ~120 seconds.
+            </p>
             {(cfg.arr?.instances || []).map((inst, idx) => {
               const statusInst = arrStatus?.instances?.find(s => s.name === inst.name)
               const arrTestSt = arrTestState[inst.name] || {}
