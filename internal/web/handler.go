@@ -995,10 +995,6 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 			if inst.Type == "radarr" {
 				categories = []int{2000}
 			}
-			tags := []int{}
-			if tagID >= 0 {
-				tags = []int{tagID}
-			}
 			indexer := map[string]interface{}{
 				"name":                    "VODarr",
 				"implementation":          "Torznab",
@@ -1010,7 +1006,7 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 				"supportsRss":             true,
 				"supportsSearch":          true,
 				"priority":                1,
-				"tags":                    tags,
+				"tags":                    []int{},
 				"fields": []map[string]interface{}{
 					{"name": "baseUrl", "value": newznabURL},
 					{"name": "apiPath", "value": "/api"},

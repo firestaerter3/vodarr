@@ -53,6 +53,13 @@ type itemDescriptor struct {
 
 const sessionTTL = 24 * time.Hour
 
+const (
+	loginFormMaxBytes    int64 = 1 << 20 // 1 MiB
+	mutatingFormMaxBytes int64 = 4 << 20 // 4 MiB
+	addBodyMaxBytes      int64 = 40 << 20
+	addMultipartMemory   int64 = 32 << 20
+)
+
 // Handler impersonates the qBittorrent Web API v2.
 type Handler struct {
 	store         *Store
@@ -163,7 +170,11 @@ func (h *Handler) registerRoutes() {
 
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if h.username != "" {
-		r.ParseForm()
+		r.Body = http.MaxBytesReader(w, r.Body, loginFormMaxBytes)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
 		u := r.FormValue("username")
 		p := r.FormValue("password")
 		usernameOK := subtle.ConstantTimeCompare([]byte(u), []byte(h.username)) == 1
@@ -235,8 +246,15 @@ func (h *Handler) handleBuildInfo(w http.ResponseWriter, r *http.Request) {
 // ---- Torrents add ----
 
 func (h *Handler) handleTorrentsAdd(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		r.ParseForm()
+	r.Body = http.MaxBytesReader(w, r.Body, addBodyMaxBytes)
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		if err := r.ParseMultipartForm(addMultipartMemory); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+	} else if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
 	}
 
 	savePath := r.FormValue("savepath")
@@ -686,7 +704,11 @@ func (h *Handler) handleTorrentsFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleTorrentsDelete(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
+	r.Body = http.MaxBytesReader(w, r.Body, mutatingFormMaxBytes)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
 	hashes := r.FormValue("hashes")
 	deleteFiles := r.FormValue("deleteFiles") == "true"
 	for _, hash := range strings.Split(hashes, "|") {
@@ -730,7 +752,11 @@ func (h *Handler) handleCategories(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
+	r.Body = http.MaxBytesReader(w, r.Body, mutatingFormMaxBytes)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
 	name := r.FormValue("category")
 	savePath := r.FormValue("savePath")
 	if name != "" {
