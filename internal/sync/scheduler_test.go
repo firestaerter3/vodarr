@@ -380,4 +380,77 @@ func TestEnrichYearConflict(t *testing.T) {
 	if got.CanonicalName != "Ghostbusters: Answer the Call" {
 		t.Errorf("CanonicalName = %q, want Ghostbusters: Answer the Call", got.CanonicalName)
 	}
+
+	t.Run("year matches -- no conflict", func(t *testing.T) {
+		// provider TMDBId year (1984) matches name year (1984) -> no retry
+		mux2 := http.NewServeMux()
+		mux2.HandleFunc("/movie/620", func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"title": "Ghostbusters", "runtime": 105, "release_date": "1984-06-08",
+			})
+		})
+		mux2.HandleFunc("/movie/620/external_ids", func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"imdb_id": "tt0087332"})
+		})
+		srv2 := httptest.NewServer(mux2)
+		defer srv2.Close()
+
+		tc2 := tmdb.NewClient("testkey")
+		tc2.SetBaseURL(srv2.URL)
+		cfg2 := &config.Config{}
+		cfg2.TMDB.APIKey = "testkey"
+		cfg2.Sync.Parallelism = 1
+		sched2 := &Scheduler{cfg: cfg2, tmdb: tc2}
+
+		item2 := &index.Item{
+			Type: index.TypeMovie, XtreamID: 2,
+			Name:   "┃NL┃ Ghostbusters - 1984 [DOLBY]", // name year matches TMDB year
+			TMDBId: "620",
+		}
+		enriched2, _ := sched2.enrich(context.Background(), []*index.Item{item2}, nil)
+		got2 := enriched2[0]
+		if got2.TMDBId != "620" {
+			t.Errorf("TMDBId = %q, want 620 (no conflict, should not retry)", got2.TMDBId)
+		}
+		if got2.IMDBId != "tt0087332" {
+			t.Errorf("IMDBId = %q, want tt0087332", got2.IMDBId)
+		}
+	})
+
+	t.Run("conflict but title search finds nothing -- provider ID restored", func(t *testing.T) {
+		mux3 := http.NewServeMux()
+		mux3.HandleFunc("/movie/620", func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"title": "Ghostbusters", "runtime": 105, "release_date": "1984-06-08",
+			})
+		})
+		mux3.HandleFunc("/movie/620/external_ids", func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"imdb_id": "tt0087332"})
+		})
+		mux3.HandleFunc("/search/movie", func(w http.ResponseWriter, r *http.Request) {
+			// return empty results -- no match found for the year-constrained search
+			json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{}})
+		})
+		srv3 := httptest.NewServer(mux3)
+		defer srv3.Close()
+
+		tc3 := tmdb.NewClient("testkey")
+		tc3.SetBaseURL(srv3.URL)
+		cfg3 := &config.Config{}
+		cfg3.TMDB.APIKey = "testkey"
+		cfg3.Sync.Parallelism = 1
+		sched3 := &Scheduler{cfg: cfg3, tmdb: tc3}
+
+		item3 := &index.Item{
+			Type: index.TypeMovie, XtreamID: 3,
+			Name:   "┃NL┃ Ghostbusters - 2016 [DOLBY]", // conflict: name=2016, TMDB=1984
+			TMDBId: "620",
+		}
+		enriched3, _ := sched3.enrich(context.Background(), []*index.Item{item3}, nil)
+		got3 := enriched3[0]
+		// provider ID should be restored so the item doesn't look brand-new next sync
+		if got3.TMDBId != "620" {
+			t.Errorf("TMDBId = %q, want 620 (restored after failed retry)", got3.TMDBId)
+		}
+	})
 }

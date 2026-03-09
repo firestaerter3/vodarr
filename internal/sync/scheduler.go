@@ -698,7 +698,16 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 											}
 										}
 									}
+								} else {
+									// resolveByTitle found nothing -- restore provider ID so the item is
+									// still traceable and won't re-enrich on every sync.
+									item.TMDBId = providerTMDBId
 								}
+								// Prevent the no-IMDB fallback from triggering regardless of outcome --
+								// the year-conflict retry already performed a targeted title search with
+								// the correct year, so a year-unguided retry would risk re-selecting the
+								// original wrong movie.
+								providerTMDBId = ""
 							}
 						}
 					}
