@@ -1,8 +1,16 @@
 package sync
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"testing"
+
+	"github.com/vodarr/vodarr/internal/config"
+	"github.com/vodarr/vodarr/internal/index"
+	"github.com/vodarr/vodarr/internal/tmdb"
 )
 
 func TestParseDuration(t *testing.T) {
@@ -296,5 +304,80 @@ func TestCleanTitleQualityMarkers(t *testing.T) {
 		if got != c.want {
 			t.Errorf("cleanTitleForSearch(%q) = %q, want %q", c.input, got, c.want)
 		}
+	}
+}
+
+func TestEnrichYearConflict(t *testing.T) {
+	// Provider gives TMDBId=620 (Ghostbusters 1984) for a stream named
+	// "Ghostbusters - 2016 [DOLBY]".  After fetching details for 620 and
+	// finding year=1984 ≠ name year=2016, enrich must clear the provider ID
+	// and retry title search, landing on TMDBId=999 (the mock 2016 film).
+
+	mux := http.NewServeMux()
+
+	// GET /movie/620 — the wrong movie (1984)
+	mux.HandleFunc("/movie/620", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"title":        "Ghostbusters",
+			"runtime":      105,
+			"release_date": "1984-06-08",
+		})
+	})
+
+	// GET /movie/620/external_ids — wrong IMDB ID
+	mux.HandleFunc("/movie/620/external_ids", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"imdb_id": "tt0087332",
+		})
+	})
+
+	// GET /search/movie — title retry with year=2016
+	mux.HandleFunc("/search/movie", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]any{
+				{"id": 999, "title": "Ghostbusters: Answer the Call", "release_date": "2016-07-15"},
+			},
+		})
+	})
+
+	// GET /movie/999/external_ids — correct IMDB ID
+	mux.HandleFunc("/movie/999/external_ids", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"imdb_id": "tt1289401",
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	tc := tmdb.NewClient("testkey")
+	tc.SetBaseURL(srv.URL)
+
+	cfg := &config.Config{}
+	cfg.TMDB.APIKey = "testkey"
+	cfg.Sync.Parallelism = 1
+	sched := &Scheduler{cfg: cfg, tmdb: tc}
+
+	item := &index.Item{
+		Type:     index.TypeMovie,
+		XtreamID: 1,
+		Name:     "┃NL┃ Ghostbusters - 2016 [DOLBY]",
+		TMDBId:   "620",
+	}
+
+	enriched, err := sched.enrich(context.Background(), []*index.Item{item}, nil)
+	if err != nil {
+		t.Fatalf("enrich returned error: %v", err)
+	}
+	got := enriched[0]
+
+	if got.TMDBId != "999" {
+		t.Errorf("TMDBId = %q, want 999", got.TMDBId)
+	}
+	if got.IMDBId != "tt1289401" {
+		t.Errorf("IMDBId = %q, want tt1289401", got.IMDBId)
+	}
+	if got.CanonicalName != "Ghostbusters: Answer the Call" {
+		t.Errorf("CanonicalName = %q, want Ghostbusters: Answer the Call", got.CanonicalName)
 	}
 }

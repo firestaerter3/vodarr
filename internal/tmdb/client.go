@@ -104,6 +104,11 @@ type tvSearchResponse struct {
 	Results []TVSearchResult `json:"results"`
 }
 
+// SetBaseURL overrides the default TMDB API base URL. Used in tests.
+func (c *Client) SetBaseURL(u string) {
+	c.baseURL = u
+}
+
 // Stop releases the rate limiter ticker (5B).
 func (c *Client) Stop() {
 	c.limiter.Stop()

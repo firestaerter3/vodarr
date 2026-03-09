@@ -660,6 +660,47 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 								item.CanonicalName = canonTitle
 							}
 						}
+
+						// Year-conflict check: if the raw name contains an explicit trailing
+						// year that differs from the TMDB result year, the provider TMDBId
+						// is pointing to the wrong movie (e.g. a remake vs. the original).
+						// Clear the provider IDs and retry via title search with the name year.
+						if item.Type == index.TypeMovie && providerTMDBId != "" {
+							nameYear := extractNameYear(item.Name, s.userPatterns)
+							tmdbYear := ""
+							if len(item.ReleaseDate) >= 4 {
+								tmdbYear = item.ReleaseDate[:4]
+							}
+							if nameYear != "" && tmdbYear != "" && nameYear != tmdbYear {
+								slog.Debug("provider TMDBId year conflict, retrying via title search",
+									"name", item.Name,
+									"name_year", nameYear,
+									"tmdb_year", tmdbYear,
+									"provider_tmdb_id", providerTMDBId,
+								)
+								item.TMDBId = ""
+								item.CanonicalName = ""
+								item.IMDBId = ""
+								item.TVDBId = ""
+								item.Year = nameYear
+								if err := s.resolveByTitle(ctx, item); err != nil {
+									slog.Debug("year-conflict title retry failed", "name", item.Name, "error", err)
+								}
+								if item.TMDBId != "" {
+									retryID, err := strconv.Atoi(item.TMDBId)
+									if err == nil && retryID > 0 {
+										retryExtIDs, err := s.tmdb.GetMovieExternalIDs(ctx, retryID)
+										if err != nil {
+											slog.Debug("year-conflict external ids fetch failed", "tmdb_id", retryID, "error", err)
+										} else if retryExtIDs != nil {
+											if retryExtIDs.IMDBID != "" {
+												item.IMDBId = retryExtIDs.IMDBID
+											}
+										}
+									}
+								}
+							}
+						}
 					}
 				}
 
