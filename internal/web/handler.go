@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -814,9 +815,41 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 
 	webhookURL := h.webhookURL(r)
 
+	const (
+		arrSetupTimeout = 90 * time.Second
+		arrSetupRetries = 1
+	)
+
 	results := map[string]interface{}{}
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: arrSetupTimeout}
 	baseURL := strings.TrimRight(inst.URL, "/")
+	doWithRetry := func(method, url string, body []byte) (*http.Response, error) {
+		var lastErr error
+		for attempt := 0; attempt <= arrSetupRetries; attempt++ {
+			var bodyReader io.Reader
+			if len(body) > 0 {
+				bodyReader = bytes.NewReader(body)
+			}
+			req, _ := http.NewRequestWithContext(r.Context(), method, url, bodyReader)
+			req.Header.Set("X-Api-Key", inst.APIKey)
+			if len(body) > 0 {
+				req.Header.Set("Content-Type", "application/json")
+			}
+
+			resp, err := client.Do(req)
+			if err == nil {
+				return resp, nil
+			}
+			lastErr = err
+			var netErr net.Error
+			isTimeout := errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout())
+			if !isTimeout || attempt == arrSetupRetries {
+				return nil, err
+			}
+			slog.Warn("arr setup request timed out, retrying", "instance", inst.Name, "attempt", attempt+1, "method", method, "url", url)
+		}
+		return nil, lastErr
+	}
 
 	// Step 1: Configure importExtraFiles
 	mmURL := fmt.Sprintf("%s/api/v3/config/mediamanagement", baseURL)
@@ -1015,10 +1048,7 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 				},
 			}
 			idxBody, _ := json.Marshal(indexer)
-			idxPostReq, _ := http.NewRequestWithContext(r.Context(), "POST", indexerListURL, bytes.NewReader(idxBody))
-			idxPostReq.Header.Set("X-Api-Key", inst.APIKey)
-			idxPostReq.Header.Set("Content-Type", "application/json")
-			idxPostResp, err := client.Do(idxPostReq)
+			idxPostResp, err := doWithRetry(http.MethodPost, indexerListURL, idxBody)
 			if err != nil {
 				results["indexer"] = map[string]interface{}{"success": false, "error": err.Error()}
 			} else {
@@ -1174,10 +1204,7 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 					}
 					updateURL := fmt.Sprintf("%s/api/v3/indexer/%d", baseURL, int(idFloat))
 					body, _ := json.Marshal(idx)
-					upReq, _ := http.NewRequestWithContext(r.Context(), "PUT", updateURL, bytes.NewReader(body))
-					upReq.Header.Set("X-Api-Key", inst.APIKey)
-					upReq.Header.Set("Content-Type", "application/json")
-					upResp, err := client.Do(upReq)
+					upResp, err := doWithRetry(http.MethodPut, updateURL, body)
 					if err != nil {
 						results["indexerBinding"] = map[string]interface{}{"success": false, "error": err.Error()}
 						break
