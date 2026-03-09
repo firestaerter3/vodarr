@@ -186,9 +186,10 @@ func TestExtractTrailingYearAllPatterns(t *testing.T) {
 
 func TestExtractNameYear(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
-		want  string
+		name     string
+		input    string
+		patterns []*regexp.Regexp
+		want     string
 	}{
 		{
 			name:  "dash year after quality marker",
@@ -240,10 +241,21 @@ func TestExtractNameYear(t *testing.T) {
 			input: "The Matrix - 1999",
 			want:  "1999",
 		},
+		{
+			name:  "NL gesproken marker stripped to reveal year",
+			input: "┃NL┃ Some Movie - 2022 [NL Gesproken]",
+			want:  "2022",
+		},
+		{
+			name:     "user pattern stripped, year preserved",
+			input:    "┃NL┃ Director's Cut - 2015",
+			patterns: []*regexp.Regexp{regexp.MustCompile(`(?i)director'?s cut`)},
+			want:     "2015",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := extractNameYear(tc.input, nil)
+			got := extractNameYear(tc.input, tc.patterns)
 			if got != tc.want {
 				t.Errorf("extractNameYear(%q) = %q, want %q", tc.input, got, tc.want)
 			}

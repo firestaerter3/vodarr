@@ -64,7 +64,7 @@ func extractTrailingYear(name string) string {
 // extractNameYear extracts a trailing 4-digit year from a raw IPTV stream
 // name after stripping IPTV prefixes and quality/language markers (HEVC, 4K,
 // DOLBY, NL GESPROKEN, user patterns).  Unlike cleanTitleForSearch it does NOT
-// strip year patterns — it strips only the noise that follows the year, so
+// strip year patterns -- it strips only the noise that follows the year, so
 // that extractTrailingYear can find it at the end of the string.
 // Returns "" if no trailing year pattern is present.
 func extractNameYear(name string, patterns []*regexp.Regexp) string {
