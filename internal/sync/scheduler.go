@@ -308,7 +308,9 @@ func (s *Scheduler) fetchAll(ctx context.Context) ([]*index.Item, error) {
 
 		year := st.Year
 		if year == "" {
-			year = extractTrailingYear(st.Name)
+			// Use extractNameYear (strips quality markers before matching) so
+			// that "Movie - 2016 [DOLBY]" correctly yields "2016" rather than "".
+			year = extractNameYear(st.Name, s.userPatterns)
 		}
 		item := &index.Item{
 			Type:         index.TypeMovie,
