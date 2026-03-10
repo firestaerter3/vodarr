@@ -51,6 +51,7 @@ type SyncConfig struct {
 	Interval             string   `yaml:"interval"`
 	OnStartup            bool     `yaml:"on_startup"`
 	Parallelism          int      `yaml:"parallelism"`
+	GraceCycles          int      `yaml:"grace_cycles"`
 	TitleCleanupPatterns []string `yaml:"title_cleanup_patterns,omitempty"`
 
 	// Parsed interval (not from YAML directly)
@@ -140,6 +141,7 @@ func defaults() *Config {
 			Interval:    "6h",
 			OnStartup:   true,
 			Parallelism: 10,
+			GraceCycles: 3,
 		},
 		Server: ServerConfig{
 			NewznabPort: 9091,

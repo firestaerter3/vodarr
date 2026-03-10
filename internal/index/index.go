@@ -51,6 +51,10 @@ type Item struct {
 	Duration     float64 `json:"duration,omitempty"`     // seconds, from Xtream API
 	RuntimeMins  int     `json:"runtime_mins,omitempty"` // minutes, from TMDB at enrichment time
 
+	// Grace period tracking (managed by sync scheduler)
+	LastSeenSync int `json:"last_seen_sync,omitempty"` // sync generation when last seen in provider catalog
+	MissingSince int `json:"missing_since,omitempty"`  // sync generation when first noticed missing (0 = present)
+
 	// Normalised title used for fuzzy matching (set by index on insert)
 	normalizedTitle string
 }

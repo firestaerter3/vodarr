@@ -223,6 +223,71 @@ func TestFileSafeStripsNullByte(t *testing.T) {
 	}
 }
 
+func TestRemoveMovie(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir, "movies", "tv")
+
+	// Write a movie first so the directory exists.
+	if _, err := w.WriteMovie("Inception", "2010", "http://x/1.mkv", nil); err != nil {
+		t.Fatalf("WriteMovie: %v", err)
+	}
+
+	movieDir := filepath.Join(dir, "movies", "Inception (2010)")
+	if _, err := os.Stat(movieDir); err != nil {
+		t.Fatalf("directory should exist before removal: %v", err)
+	}
+
+	if err := w.RemoveMovie("Inception", "2010"); err != nil {
+		t.Fatalf("RemoveMovie: %v", err)
+	}
+
+	if _, err := os.Stat(movieDir); !os.IsNotExist(err) {
+		t.Errorf("directory should be gone after RemoveMovie; stat err = %v", err)
+	}
+}
+
+func TestRemoveMovieNonexistent(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir, "movies", "tv")
+
+	// Removing a movie that was never written should succeed silently.
+	if err := w.RemoveMovie("Ghost Movie", "2099"); err != nil {
+		t.Errorf("RemoveMovie on nonexistent dir: expected nil, got %v", err)
+	}
+}
+
+func TestRemoveSeries(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir, "movies", "tv")
+
+	// Write an episode first so the series directory exists.
+	if _, err := w.WriteEpisode("Breaking Bad", 1, 1, "Pilot", "http://x/1.mkv", nil); err != nil {
+		t.Fatalf("WriteEpisode: %v", err)
+	}
+
+	seriesDir := filepath.Join(dir, "tv", "Breaking Bad")
+	if _, err := os.Stat(seriesDir); err != nil {
+		t.Fatalf("series directory should exist before removal: %v", err)
+	}
+
+	if err := w.RemoveSeries("Breaking Bad"); err != nil {
+		t.Fatalf("RemoveSeries: %v", err)
+	}
+
+	if _, err := os.Stat(seriesDir); !os.IsNotExist(err) {
+		t.Errorf("series directory should be gone after RemoveSeries; stat err = %v", err)
+	}
+}
+
+func TestRemoveSeriesNonexistent(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir, "movies", "tv")
+
+	if err := w.RemoveSeries("Ghost Series"); err != nil {
+		t.Errorf("RemoveSeries on nonexistent dir: expected nil, got %v", err)
+	}
+}
+
 func TestFolderSafeStripsRTLOverride(t *testing.T) {
 	name := "Movie\u202EName"
 	got := folderSafe(name)

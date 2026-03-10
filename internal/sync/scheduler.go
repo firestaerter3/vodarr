@@ -14,6 +14,7 @@ import (
 
 	"github.com/vodarr/vodarr/internal/config"
 	"github.com/vodarr/vodarr/internal/index"
+	"github.com/vodarr/vodarr/internal/strm"
 	"github.com/vodarr/vodarr/internal/tmdb"
 	"github.com/vodarr/vodarr/internal/tvdb"
 	"github.com/vodarr/vodarr/internal/xtream"
@@ -125,8 +126,10 @@ type Scheduler struct {
 	tmdb         *tmdb.Client
 	tvdb         *tvdb.Client // nil when tvdb_api_key is not configured
 	idx          *index.Index
+	writer       *strm.Writer // nil = cleanup disabled
 	userPatterns []*regexp.Regexp
 	cachePath    string
+	syncGen      int // monotonically increasing sync generation counter
 
 	mu      gosync.RWMutex // 3A: protects status field
 	syncMu  gosync.Mutex   // 3B: serialises concurrent Sync calls
@@ -134,7 +137,7 @@ type Scheduler struct {
 	cancel  context.CancelFunc
 }
 
-func NewScheduler(cfg *config.Config, xc *xtream.Client, tc *tmdb.Client, idx *index.Index) *Scheduler {
+func NewScheduler(cfg *config.Config, xc *xtream.Client, tc *tmdb.Client, idx *index.Index, w *strm.Writer) *Scheduler {
 	var patterns []*regexp.Regexp
 	for _, p := range cfg.Sync.TitleCleanupPatterns {
 		if strings.TrimSpace(p) == "" {
@@ -157,6 +160,7 @@ func NewScheduler(cfg *config.Config, xc *xtream.Client, tc *tmdb.Client, idx *i
 		tmdb:         tc,
 		tvdb:         tvdbClient,
 		idx:          idx,
+		writer:       w,
 		userPatterns: patterns,
 		cachePath:    CachePath(cfg.Output.Path),
 	}
@@ -174,8 +178,9 @@ func (s *Scheduler) Start(ctx context.Context) {
 		slog.Warn("index cache load failed, starting empty", "error", err)
 	} else if cached != nil && len(cached.Items) > 0 {
 		s.idx.Replace(cached.Items)
+		s.syncGen = cached.SyncGeneration
 		movies, series := s.idx.Counts()
-		slog.Info("loaded index from cache", "movies", movies, "series", series, "cached_at", cached.Timestamp)
+		slog.Info("loaded index from cache", "movies", movies, "series", series, "cached_at", cached.Timestamp, "sync_gen", s.syncGen)
 	}
 
 	if s.cfg.Sync.OnStartup {
@@ -239,7 +244,9 @@ func (s *Scheduler) Sync(ctx context.Context) error {
 	// Build enrichment skip map from the previous sync's cache. Items whose
 	// name and type are unchanged can reuse their IDs without hitting TMDB.
 	var cachedByKey map[string]*index.Item
+	var allCachedItems []*index.Item
 	if cached, err := LoadIndexCache(s.cachePath); err == nil && cached != nil {
+		allCachedItems = cached.Items
 		cachedByKey = make(map[string]*index.Item, len(cached.Items))
 		for _, ci := range cached.Items {
 			cachedByKey[fmt.Sprintf("%s:%d", ci.Type, ci.XtreamID)] = ci
@@ -252,15 +259,89 @@ func (s *Scheduler) Sync(ctx context.Context) error {
 		slog.Warn("enrichment completed with errors", "error", err)
 	}
 
-	s.idx.Replace(enriched)
+	// Advance the generation counter and stamp all fresh items as current.
+	s.syncGen++
+	for _, item := range enriched {
+		item.LastSeenSync = s.syncGen
+		item.MissingSince = 0
+	}
+
+	// Apply grace period: retain cached items not seen in this sync for
+	// up to GraceCycles syncs before expiring them.
+	graceCycles := s.cfg.Sync.GraceCycles
+	merged := enriched
+
+	if graceCycles > 0 && len(allCachedItems) > 0 {
+		// Build a key set of items present in this sync.
+		freshKeys := make(map[string]struct{}, len(enriched))
+		for _, item := range enriched {
+			freshKeys[fmt.Sprintf("%s:%d", item.Type, item.XtreamID)] = struct{}{}
+		}
+
+		var retained []*index.Item
+		var expired []*index.Item
+
+		for _, ci := range allCachedItems {
+			key := fmt.Sprintf("%s:%d", ci.Type, ci.XtreamID)
+			if _, ok := freshKeys[key]; ok {
+				// Item is present in this sync — already in enriched list.
+				continue
+			}
+			// Item is missing from this sync.
+			if ci.MissingSince == 0 {
+				ci.MissingSince = s.syncGen
+			}
+			missedFor := s.syncGen - ci.MissingSince
+			if missedFor < graceCycles {
+				retained = append(retained, ci)
+			} else {
+				expired = append(expired, ci)
+			}
+		}
+
+		if len(retained) > 0 {
+			slog.Info("grace period: retaining items temporarily missing from provider",
+				"count", len(retained))
+			merged = append(merged, retained...)
+		}
+		if len(expired) > 0 {
+			slog.Info("grace period: expiring items missing for too long",
+				"count", len(expired), "grace_cycles", graceCycles)
+			s.cleanupExpired(expired)
+		}
+	}
+
+	s.idx.Replace(merged)
 	movies, series := s.idx.Counts()
 	slog.Info("sync complete", "movies", movies, "series", series)
 
-	if err := SaveIndexCache(s.cachePath, enriched); err != nil {
+	if err := SaveIndexCache(s.cachePath, merged, s.syncGen); err != nil {
 		slog.Warn("index cache save failed", "error", err)
 	}
 
 	return nil
+}
+
+// cleanupExpired removes .strm/.mkv directories for items that have exceeded
+// the grace period and are no longer retained in the index.
+func (s *Scheduler) cleanupExpired(expired []*index.Item) {
+	if s.writer == nil {
+		return
+	}
+	for _, item := range expired {
+		var err error
+		switch item.Type {
+		case index.TypeMovie:
+			err = s.writer.RemoveMovie(item.Name, item.Year)
+		case index.TypeSeries:
+			err = s.writer.RemoveSeries(item.Name)
+		}
+		if err != nil {
+			slog.Warn("cleanup expired item failed", "name", item.Name, "type", item.Type, "error", err)
+		} else {
+			slog.Info("cleaned up expired item", "name", item.Name, "type", item.Type)
+		}
+	}
 }
 
 func (s *Scheduler) setRunning(running bool, errMsg string) {

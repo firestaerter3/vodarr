@@ -34,7 +34,7 @@ func TestIndexCacheRoundTrip(t *testing.T) {
 		},
 	}
 
-	if err := SaveIndexCache(path, items); err != nil {
+	if err := SaveIndexCache(path, items, 7); err != nil {
 		t.Fatalf("SaveIndexCache: %v", err)
 	}
 
@@ -69,6 +69,9 @@ func TestIndexCacheRoundTrip(t *testing.T) {
 	}
 	if loaded.Timestamp.IsZero() {
 		t.Error("Timestamp should not be zero")
+	}
+	if loaded.SyncGeneration != 7 {
+		t.Errorf("SyncGeneration = %d, want 7", loaded.SyncGeneration)
 	}
 }
 
@@ -110,7 +113,7 @@ func TestSaveIndexCacheAtomicWrite(t *testing.T) {
 		{Type: index.TypeMovie, XtreamID: 99, Name: "Test Movie"},
 	}
 
-	if err := SaveIndexCache(path, items); err != nil {
+	if err := SaveIndexCache(path, items, 0); err != nil {
 		t.Fatalf("SaveIndexCache: %v", err)
 	}
 
@@ -139,7 +142,7 @@ func TestSaveIndexCacheTimestamp(t *testing.T) {
 	path := filepath.Join(dir, ".vodarr-cache.json")
 
 	before := time.Now()
-	if err := SaveIndexCache(path, nil); err != nil {
+	if err := SaveIndexCache(path, nil, 0); err != nil {
 		t.Fatalf("SaveIndexCache: %v", err)
 	}
 	after := time.Now()
