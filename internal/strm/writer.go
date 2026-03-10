@@ -121,6 +121,54 @@ func (w *Writer) write(dir, filename, content string, info *probe.MediaInfo) (Wr
 	return WriteResult{StrmPath: strmPath, MkvPath: mkvPath}, nil
 }
 
+// RemoveMovie deletes the directory for a movie (including all .strm/.mkv files).
+// The directory is determined by the same naming rules as WriteMovie.
+// Returns nil if the directory does not exist.
+func (w *Writer) RemoveMovie(name, year string) error {
+	folderName := folderSafe(name)
+	if year != "" {
+		folderName = fmt.Sprintf("%s (%s)", folderName, year)
+	}
+	dir := filepath.Join(w.outputPath, w.moviesDir, folderName)
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("abs path: %w", err)
+	}
+	absOutput, err := filepath.Abs(w.outputPath)
+	if err != nil {
+		return fmt.Errorf("abs output path: %w", err)
+	}
+	if !strings.HasPrefix(absDir+string(filepath.Separator), absOutput+string(filepath.Separator)) {
+		return fmt.Errorf("path traversal detected: %s escapes output directory", dir)
+	}
+	if err := os.RemoveAll(absDir); err != nil {
+		return fmt.Errorf("remove movie dir %s: %w", absDir, err)
+	}
+	return nil
+}
+
+// RemoveSeries deletes the directory for a series (including all seasons, .strm/.mkv files).
+// The directory is determined by the same naming rules as WriteEpisode.
+// Returns nil if the directory does not exist.
+func (w *Writer) RemoveSeries(name string) error {
+	dir := filepath.Join(w.outputPath, w.seriesDir, folderSafe(name))
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("abs path: %w", err)
+	}
+	absOutput, err := filepath.Abs(w.outputPath)
+	if err != nil {
+		return fmt.Errorf("abs output path: %w", err)
+	}
+	if !strings.HasPrefix(absDir+string(filepath.Separator), absOutput+string(filepath.Separator)) {
+		return fmt.Errorf("path traversal detected: %s escapes output directory", dir)
+	}
+	if err := os.RemoveAll(absDir); err != nil {
+		return fmt.Errorf("remove series dir %s: %w", absDir, err)
+	}
+	return nil
+}
+
 var illegalChars = regexp.MustCompile(`[<>:"/\\|?*]`)
 
 const maxNameLen = 200

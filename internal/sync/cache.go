@@ -13,8 +13,9 @@ import (
 // IndexCache persists the fully-enriched index so it can be restored on
 // restart, eliminating the 10-20 minute cold-start window.
 type IndexCache struct {
-	Timestamp time.Time     `json:"timestamp"`
-	Items     []*index.Item `json:"items"`
+	Timestamp       time.Time     `json:"timestamp"`
+	Items           []*index.Item `json:"items"`
+	SyncGeneration  int           `json:"sync_generation"`
 }
 
 // CachePath returns the canonical path for the cache file given the output directory.
@@ -40,11 +41,12 @@ func LoadIndexCache(path string) (*IndexCache, error) {
 	return &c, nil
 }
 
-// SaveIndexCache writes items to path atomically (temp file + rename).
-func SaveIndexCache(path string, items []*index.Item) error {
+// SaveIndexCache writes items and the current sync generation to path atomically (temp file + rename).
+func SaveIndexCache(path string, items []*index.Item, syncGen int) error {
 	c := &IndexCache{
-		Timestamp: time.Now(),
-		Items:     items,
+		Timestamp:      time.Now(),
+		Items:          items,
+		SyncGeneration: syncGen,
 	}
 	data, err := json.Marshal(c)
 	if err != nil {

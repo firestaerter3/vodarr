@@ -61,7 +61,7 @@ func main() {
 	strmWriter := strm.NewWriter(cfg.Output.Path, cfg.Output.MoviesDir, cfg.Output.SeriesDir)
 	qbitStore := qbit.NewStore()
 
-	scheduler := vodarrsync.NewScheduler(cfg, xc, tc, idx)
+	scheduler := vodarrsync.NewScheduler(cfg, xc, tc, idx, strmWriter)
 
 	// 1B: Use configured external URL; fall back to request Host header (handled in newznab handler)
 	newznabSrvURL := cfg.Server.ExternalURL

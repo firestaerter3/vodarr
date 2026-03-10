@@ -6,11 +6,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	gosync "sync"
 	"testing"
 
 	"github.com/vodarr/vodarr/internal/config"
 	"github.com/vodarr/vodarr/internal/index"
+	"github.com/vodarr/vodarr/internal/strm"
 	"github.com/vodarr/vodarr/internal/tmdb"
+	"github.com/vodarr/vodarr/internal/xtream"
 )
 
 func TestParseDuration(t *testing.T) {
@@ -453,4 +456,254 @@ func TestEnrichYearConflict(t *testing.T) {
 			t.Errorf("TMDBId = %q, want 620 (restored after failed retry)", got3.TMDBId)
 		}
 	})
+}
+
+// switchableXtreamServer is a test helper that lets tests swap the VOD list
+// between syncs without creating new HTTP servers.
+type switchableXtreamServer struct {
+	mu   gosync.Mutex
+	vods []map[string]interface{}
+	srv  *httptest.Server
+}
+
+func newSwitchableXtreamServer(vods []map[string]interface{}) *switchableXtreamServer {
+	s := &switchableXtreamServer{vods: vods}
+	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		action := r.URL.Query().Get("action")
+		switch action {
+		case "get_vod_streams":
+			s.mu.Lock()
+			cur := s.vods
+			s.mu.Unlock()
+			json.NewEncoder(w).Encode(cur)
+		case "get_series":
+			json.NewEncoder(w).Encode([]interface{}{})
+		default:
+			http.Error(w, "unknown action", http.StatusBadRequest)
+		}
+	}))
+	return s
+}
+
+func (s *switchableXtreamServer) setVods(vods []map[string]interface{}) {
+	s.mu.Lock()
+	s.vods = vods
+	s.mu.Unlock()
+}
+
+func (s *switchableXtreamServer) close() { s.srv.Close() }
+
+// vodStreamJSON returns the minimal JSON for a single VOD stream.
+func vodStreamJSON(id int, name string) map[string]interface{} {
+	return map[string]interface{}{
+		"stream_id":           id,
+		"name":                name,
+		"container_extension": "mkv",
+	}
+}
+
+// buildGraceScheduler creates a Scheduler backed by the given switchable server.
+func buildGraceScheduler(t *testing.T, srv *switchableXtreamServer, outputDir string, graceCycles int) *Scheduler {
+	t.Helper()
+
+	cfg := &config.Config{}
+	cfg.Sync.GraceCycles = graceCycles
+	cfg.Sync.Parallelism = 1
+	cfg.Output.Path = outputDir
+	cfg.Output.MoviesDir = "movies"
+	cfg.Output.SeriesDir = "tv"
+
+	xc := xtream.NewClient(srv.srv.URL, "u", "p")
+	idx := index.New()
+	w := strm.NewWriter(outputDir, "movies", "tv")
+
+	return &Scheduler{
+		cfg:       cfg,
+		xtream:    xc,
+		idx:       idx,
+		writer:    w,
+		cachePath: CachePath(outputDir),
+	}
+}
+
+// TestGracePeriodRetainsItems verifies that an item temporarily missing from the
+// provider catalog is kept in the index for < graceCycles syncs.
+func TestGracePeriodRetainsItems(t *testing.T) {
+	outputDir := t.TempDir()
+	ctx := context.Background()
+
+	allVods := []map[string]interface{}{
+		vodStreamJSON(1, "Movie A"),
+		vodStreamJSON(2, "Movie B"),
+		vodStreamJSON(3, "Movie C"),
+	}
+
+	srv := newSwitchableXtreamServer(allVods)
+	defer srv.close()
+	sched := buildGraceScheduler(t, srv, outputDir, 2)
+
+	// Sync 1: all 3 movies present.
+	if err := sched.Sync(ctx); err != nil {
+		t.Fatalf("sync 1: %v", err)
+	}
+	movies, _ := sched.idx.Counts()
+	if movies != 3 {
+		t.Fatalf("after sync 1: expected 3 movies, got %d", movies)
+	}
+
+	// Provider drops Movie B.
+	srv.setVods([]map[string]interface{}{
+		vodStreamJSON(1, "Movie A"),
+		vodStreamJSON(3, "Movie C"),
+	})
+
+	// Sync 2: Movie B missing for 1 cycle — within grace (missedFor=0 < 2).
+	if err := sched.Sync(ctx); err != nil {
+		t.Fatalf("sync 2: %v", err)
+	}
+	movies, _ = sched.idx.Counts()
+	if movies != 3 {
+		t.Fatalf("after sync 2 (1 miss, grace=2): expected 3 movies retained, got %d", movies)
+	}
+
+	item := sched.idx.SearchByXtreamID(2, "movie")
+	if item == nil {
+		t.Fatal("Movie B should still be in index after 1 missed sync (grace period)")
+	}
+	if item.MissingSince == 0 {
+		t.Error("Movie B MissingSince should be non-zero after first miss")
+	}
+}
+
+// TestGracePeriodExpiresItems verifies that an item missing for >= graceCycles
+// syncs is removed from the index.
+func TestGracePeriodExpiresItems(t *testing.T) {
+	outputDir := t.TempDir()
+	ctx := context.Background()
+
+	allVods := []map[string]interface{}{
+		vodStreamJSON(1, "Movie A"),
+		vodStreamJSON(2, "Movie B"),
+	}
+
+	srv := newSwitchableXtreamServer(allVods)
+	defer srv.close()
+	sched := buildGraceScheduler(t, srv, outputDir, 2)
+
+	// Sync 1: both movies present.
+	if err := sched.Sync(ctx); err != nil {
+		t.Fatalf("sync 1: %v", err)
+	}
+
+	// Provider drops Movie B from here on.
+	srv.setVods([]map[string]interface{}{vodStreamJSON(1, "Movie A")})
+
+	// Sync 2: missedFor=0 < 2 → retained.
+	if err := sched.Sync(ctx); err != nil {
+		t.Fatalf("sync 2: %v", err)
+	}
+	movies, _ := sched.idx.Counts()
+	if movies != 2 {
+		t.Fatalf("after sync 2 (miss 1): expected 2, got %d", movies)
+	}
+
+	// Sync 3: missedFor=1 < 2 → retained.
+	if err := sched.Sync(ctx); err != nil {
+		t.Fatalf("sync 3: %v", err)
+	}
+	movies, _ = sched.idx.Counts()
+	if movies != 2 {
+		t.Fatalf("after sync 3 (miss 2): expected 2, got %d", movies)
+	}
+
+	// Sync 4: missedFor=2 >= 2 → expired.
+	if err := sched.Sync(ctx); err != nil {
+		t.Fatalf("sync 4: %v", err)
+	}
+	movies, _ = sched.idx.Counts()
+	if movies != 1 {
+		t.Fatalf("after sync 4 (miss 3, expire): expected 1 movie, got %d", movies)
+	}
+	if sched.idx.SearchByXtreamID(2, "movie") != nil {
+		t.Error("Movie B should have been expired from index")
+	}
+}
+
+// TestGracePeriodRestoredItem verifies that an item that reappears during the
+// grace period has its MissingSince reset to 0.
+func TestGracePeriodRestoredItem(t *testing.T) {
+	outputDir := t.TempDir()
+	ctx := context.Background()
+
+	allVods := []map[string]interface{}{
+		vodStreamJSON(1, "Movie A"),
+		vodStreamJSON(2, "Movie B"),
+	}
+
+	srv := newSwitchableXtreamServer(allVods)
+	defer srv.close()
+	sched := buildGraceScheduler(t, srv, outputDir, 3)
+
+	// Sync 1: both present.
+	if err := sched.Sync(ctx); err != nil {
+		t.Fatalf("sync 1: %v", err)
+	}
+
+	// Sync 2: Movie B drops out.
+	srv.setVods([]map[string]interface{}{vodStreamJSON(1, "Movie A")})
+	if err := sched.Sync(ctx); err != nil {
+		t.Fatalf("sync 2: %v", err)
+	}
+	itemB := sched.idx.SearchByXtreamID(2, "movie")
+	if itemB == nil || itemB.MissingSince == 0 {
+		t.Fatal("Movie B should be in grace period after sync 2")
+	}
+
+	// Sync 3: Movie B comes back.
+	srv.setVods(allVods)
+	if err := sched.Sync(ctx); err != nil {
+		t.Fatalf("sync 3: %v", err)
+	}
+	movies, _ := sched.idx.Counts()
+	if movies != 2 {
+		t.Fatalf("after restore: expected 2 movies, got %d", movies)
+	}
+	itemB = sched.idx.SearchByXtreamID(2, "movie")
+	if itemB == nil {
+		t.Fatal("Movie B should be back in index")
+	}
+	if itemB.MissingSince != 0 {
+		t.Errorf("Movie B MissingSince = %d after restore, want 0", itemB.MissingSince)
+	}
+}
+
+// TestGracePeriodZeroCycles verifies that GraceCycles=0 restores the original
+// immediate-removal behaviour.
+func TestGracePeriodZeroCycles(t *testing.T) {
+	outputDir := t.TempDir()
+	ctx := context.Background()
+
+	allVods := []map[string]interface{}{
+		vodStreamJSON(1, "Movie A"),
+		vodStreamJSON(2, "Movie B"),
+	}
+
+	srv := newSwitchableXtreamServer(allVods)
+	defer srv.close()
+	sched := buildGraceScheduler(t, srv, outputDir, 0)
+
+	if err := sched.Sync(ctx); err != nil {
+		t.Fatalf("sync 1: %v", err)
+	}
+
+	// Provider drops Movie B immediately.
+	srv.setVods([]map[string]interface{}{vodStreamJSON(1, "Movie A")})
+
+	if err := sched.Sync(ctx); err != nil {
+		t.Fatalf("sync 2: %v", err)
+	}
+	movies, _ := sched.idx.Counts()
+	if movies != 1 {
+		t.Fatalf("with grace_cycles=0: expected immediate removal, got %d movies", movies)
+	}
 }
