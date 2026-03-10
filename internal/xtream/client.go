@@ -257,6 +257,20 @@ func (c *Client) GetSeriesInfo(ctx context.Context, id int) (*SeriesInfo, error)
 	return &info, nil
 }
 
+// BuildStreamURL constructs a stream URL for the given type ("movie" or "series"),
+// numeric id, and extension using the current client credentials.
+// Returns an empty string for unknown stream types.
+func (c *Client) BuildStreamURL(streamType string, id int, ext string) string {
+	switch streamType {
+	case "movie":
+		return c.StreamURL(id, ext)
+	case "series":
+		return c.SeriesStreamURL(id, ext)
+	default:
+		return ""
+	}
+}
+
 // StreamURL builds the stream URL for a VOD item.
 // Credentials are path-escaped to handle special characters safely (4H).
 func (c *Client) StreamURL(streamID int, ext string) string {

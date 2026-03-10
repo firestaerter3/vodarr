@@ -707,3 +707,59 @@ func TestGracePeriodZeroCycles(t *testing.T) {
 		t.Fatalf("with grace_cycles=0: expected immediate removal, got %d movies", movies)
 	}
 }
+
+func TestSyncHistoryCapAt20(t *testing.T) {
+	dir := t.TempDir()
+	srv := newSwitchableXtreamServer([]map[string]interface{}{vodStreamJSON(1, "Movie A")})
+	defer srv.close()
+	sched := buildGraceScheduler(t, srv, dir, 0)
+	ctx := context.Background()
+
+	// Run 25 syncs — history should be capped at syncHistoryCap.
+	for i := 0; i < 25; i++ {
+		if err := sched.Sync(ctx); err != nil {
+			t.Fatalf("sync %d: %v", i, err)
+		}
+	}
+
+	h := sched.SyncHistory()
+	if len(h) != syncHistoryCap {
+		t.Errorf("SyncHistory len = %d, want %d", len(h), syncHistoryCap)
+	}
+	// Most recent entry should be first.
+	if h[0].StartedAt.IsZero() {
+		t.Error("first history entry has zero StartedAt")
+	}
+}
+
+func TestSyncHistoryUnenrichedCount(t *testing.T) {
+	dir := t.TempDir()
+	// Two VOD streams with no TMDB ID — will be unenriched (TMDB key is empty).
+	srv := newSwitchableXtreamServer([]map[string]interface{}{
+		vodStreamJSON(1, "Movie No TMDB"),
+		vodStreamJSON(2, "Another Movie"),
+	})
+	defer srv.close()
+	sched := buildGraceScheduler(t, srv, dir, 0)
+	ctx := context.Background()
+
+	if err := sched.Sync(ctx); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	st := sched.Status()
+	if st.UnenrichedCount != 2 {
+		t.Errorf("UnenrichedCount = %d, want 2", st.UnenrichedCount)
+	}
+
+	h := sched.SyncHistory()
+	if len(h) == 0 {
+		t.Fatal("no sync history recorded")
+	}
+	if h[0].Found != 2 {
+		t.Errorf("SyncRun.Found = %d, want 2", h[0].Found)
+	}
+	if h[0].Unenriched != 2 {
+		t.Errorf("SyncRun.Unenriched = %d, want 2", h[0].Unenriched)
+	}
+}

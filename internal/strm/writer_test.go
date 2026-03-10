@@ -2,6 +2,8 @@ package strm
 
 import (
 	"bytes"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -315,5 +317,81 @@ func TestStrmFilePermissions(t *testing.T) {
 		if perm != 0644 {
 			t.Errorf("file %q permissions = %04o, want 0644", path, perm)
 		}
+	}
+}
+
+func TestRefreshURLs(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir, "movies", "tv")
+
+	// Write a movie and a series episode with old credentials.
+	oldMovieURL := "http://server/movie/olduser/oldpass/42.mkv"
+	oldEpURL := "http://server/series/olduser/oldpass/99.ts"
+
+	_, err := w.WriteMovie("Test Movie", "2020", oldMovieURL, nil)
+	if err != nil {
+		t.Fatalf("WriteMovie: %v", err)
+	}
+	_, err = w.WriteEpisode("Test Show", 1, 1, "Pilot", oldEpURL, nil)
+	if err != nil {
+		t.Fatalf("WriteEpisode: %v", err)
+	}
+
+	// Write a non-Xtream .strm that should be left untouched.
+	customDir := filepath.Join(dir, "custom")
+	if err := os.MkdirAll(customDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	customPath := filepath.Join(customDir, "custom.strm")
+	if err := os.WriteFile(customPath, []byte("http://other/url\n"), 0644); err != nil {
+		t.Fatalf("WriteFile custom: %v", err)
+	}
+
+	buildURL := func(streamType, streamIDStr, ext string) (string, error) {
+		return fmt.Sprintf("http://newserver/%s/newuser/newpass/%s.%s", streamType, streamIDStr, ext), nil
+	}
+
+	n, err := w.RefreshURLs(buildURL)
+	if err != nil {
+		t.Fatalf("RefreshURLs: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("RefreshURLs rewritten = %d, want 2", n)
+	}
+
+	// Verify movie URL was rewritten.
+	var movieStrmPath string
+	_ = filepath.WalkDir(filepath.Join(dir, "movies"), func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(path, ".strm") {
+			movieStrmPath = path
+		}
+		return nil
+	})
+	if movieStrmPath == "" {
+		t.Fatal("movie .strm not found after refresh")
+	}
+	content, _ := os.ReadFile(movieStrmPath)
+	if got := strings.TrimSpace(string(content)); got != "http://newserver/movie/newuser/newpass/42.mkv" {
+		t.Errorf("movie strm content = %q, want new URL", got)
+	}
+
+	// Verify custom .strm was not touched.
+	custom, _ := os.ReadFile(customPath)
+	if strings.TrimSpace(string(custom)) != "http://other/url" {
+		t.Errorf("custom strm was unexpectedly modified: %q", string(custom))
+	}
+}
+
+func TestRefreshURLsPathTraversalGuard(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir, "movies", "tv")
+
+	// Attempting to refresh should not panic or produce errors for empty dir.
+	n, err := w.RefreshURLs(func(_, _, _ string) (string, error) { return "http://x/movie/u/p/1.mkv", nil })
+	if err != nil {
+		t.Errorf("RefreshURLs on empty dir: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 rewrites on empty dir, got %d", n)
 	}
 }

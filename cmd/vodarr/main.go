@@ -74,7 +74,7 @@ func main() {
 	// 2D: Pass qBit credentials from config; newznabSrvURL used to restrict SSRF to own Newznab host
 	qbitHandler := qbit.NewHandler(qbitStore, strmWriter, xc, probe.DefaultProber, cfg.Output.Path, cfg.Server.QbitUsername, cfg.Server.QbitPassword, newznabSrvURL)
 	// 2E: Pass web credentials from config
-	webHandler := web.NewHandler(idx, scheduler, web.StaticFS(), cfg, *configPath, cfg.Server.WebUsername, cfg.Server.WebPassword, version)
+	webHandler := web.NewHandler(idx, scheduler, strmWriter, web.StaticFS(), cfg, *configPath, cfg.Server.WebUsername, cfg.Server.WebPassword, version)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

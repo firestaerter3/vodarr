@@ -111,9 +111,77 @@ function useArrStatus() {
   return arrStatus
 }
 
+function useSyncHistory() {
+  const [history, setHistory] = useState([])
+  useEffect(() => {
+    const load = () =>
+      fetch('/api/sync/history')
+        .then(r => r.json())
+        .then(data => setHistory(Array.isArray(data) ? data : []))
+        .catch(() => {})
+    load()
+    const id = setInterval(load, 5000)
+    return () => clearInterval(id)
+  }, [])
+  return history
+}
+
+function formatDurationMs(ms) {
+  if (!ms) return '—'
+  const secs = Math.round(ms / 1000)
+  if (secs < 60) return `${secs}s`
+  const m = Math.floor(secs / 60)
+  const s = secs % 60
+  return `${m}m ${s}s`
+}
+
+function SyncHistoryTable({ history }) {
+  if (!history || history.length === 0) return null
+  const shown = history.slice(0, 10)
+  return (
+    <div className="animate-fade-up mb-8">
+      <h2 className="font-display font-600 text-sm text-steel-400 uppercase tracking-widest mb-4">
+        Sync History
+      </h2>
+      <div className="border border-void-600 rounded-lg overflow-hidden bg-void-800/60">
+        <table className="w-full font-mono text-[11px]">
+          <thead>
+            <tr className="border-b border-void-600">
+              {['Started', 'Duration', 'Found', 'Enriched', 'Unenriched', 'Retained', 'Expired'].map(h => (
+                <th key={h} className="px-3 py-2 text-left text-steel-500 uppercase tracking-widest font-500">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((run, i) => (
+              <tr key={i} className="border-b border-void-600/50 last:border-0 hover:bg-void-700/30 transition-colors">
+                <td className="px-3 py-2 text-steel-400">{formatTime(run.started_at)}</td>
+                <td className="px-3 py-2 text-steel-300">{formatDurationMs(run.duration_ms)}</td>
+                <td className="px-3 py-2 text-steel-300">{run.found?.toLocaleString() ?? '—'}</td>
+                <td className="px-3 py-2 text-lime-400">{run.enriched?.toLocaleString() ?? '—'}</td>
+                <td className="px-3 py-2" style={{ color: run.unenriched > 0 ? 'var(--amber-400, #fbbf24)' : 'var(--steel-500)' }}>
+                  {run.unenriched?.toLocaleString() ?? '—'}
+                </td>
+                <td className="px-3 py-2 text-steel-400">{run.retained?.toLocaleString() ?? '—'}</td>
+                <td className="px-3 py-2 text-steel-400">{run.expired?.toLocaleString() ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {history.length > 10 && (
+          <p className="px-3 py-2 font-mono text-[10px] text-steel-600 border-t border-void-600/50">
+            Showing 10 of {history.length} runs
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function Dashboard() {
   const { status, error } = useSyncStatus()
   const arrStatus = useArrStatus()
+  const syncHistory = useSyncHistory()
   const [syncing, setSyncing] = useState(false)
 
   const arrIssues = arrStatus?.instances?.filter(i => i.issues?.length > 0) || []
@@ -152,7 +220,7 @@ export default function Dashboard() {
       </div>
 
       {/* Stats grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
         <StatCard
           label="Movies Indexed"
           value={status?.total_movies?.toLocaleString()}
@@ -173,6 +241,31 @@ export default function Dashboard() {
         <StatCard
           label="Next Sync"
           value={status ? formatTime(status.next_sync) : '—'}
+          delay={4}
+        />
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <StatCard
+          label="Unenriched"
+          value={status?.unenriched_count?.toLocaleString() ?? '—'}
+          sub={status?.unenriched_count > 0 ? 'missing IMDB/TVDB ID' : undefined}
+          delay={1}
+        />
+        <StatCard
+          label="Grace Retained"
+          value={status?.grace_retained?.toLocaleString() ?? '—'}
+          sub="items on probation"
+          delay={2}
+        />
+        <StatCard
+          label="Last Expired"
+          value={status?.last_expired?.toLocaleString() ?? '—'}
+          sub="cleaned up last run"
+          delay={3}
+        />
+        <StatCard
+          label="Sync Duration"
+          value={formatDurationMs(status?.last_sync_duration_ms)}
           delay={4}
         />
       </div>
@@ -214,6 +307,9 @@ export default function Dashboard() {
           </p>
         </div>
       )}
+
+      {/* Sync history */}
+      <SyncHistoryTable history={syncHistory} />
 
       {/* Setup guide */}
       <div className="animate-fade-up animate-fade-up-4">

@@ -14,14 +14,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/vodarr/vodarr/internal/config"
 	"github.com/vodarr/vodarr/internal/index"
 	vodarrsync "github.com/vodarr/vodarr/internal/sync"
+	"github.com/vodarr/vodarr/internal/strm"
 	"github.com/vodarr/vodarr/internal/tmdb"
 	"github.com/vodarr/vodarr/internal/tvdb"
 	"github.com/vodarr/vodarr/internal/xtream"
@@ -33,20 +36,23 @@ const passwordSentinel = "********"
 type Handler struct {
 	idx       *index.Index
 	scheduler *vodarrsync.Scheduler
+	writer    *strm.Writer // nil = strm refresh disabled
 	version   string
 	username  string // 2E: optional basic auth for API endpoints
 	password  string
 	mux       *http.ServeMux
 
-	cfgMu   sync.RWMutex
-	cfg     *config.Config
-	cfgPath string
+	cfgMu      sync.RWMutex
+	cfg        *config.Config
+	cfgPath    string
+	refreshing atomic.Bool // guards against concurrent /api/strm/refresh calls
 }
 
-func NewHandler(idx *index.Index, scheduler *vodarrsync.Scheduler, staticFS fs.FS, cfg *config.Config, cfgPath string, username, password, version string) *Handler {
+func NewHandler(idx *index.Index, scheduler *vodarrsync.Scheduler, writer *strm.Writer, staticFS fs.FS, cfg *config.Config, cfgPath string, username, password, version string) *Handler {
 	h := &Handler{
 		idx:       idx,
 		scheduler: scheduler,
+		writer:    writer,
 		version:   version,
 		username:  username,
 		password:  password,
@@ -103,6 +109,8 @@ func (h *Handler) registerRoutes(staticFS fs.FS) {
 	h.mux.HandleFunc("POST /api/arr/test", auth(h.handleArrTest))
 	h.mux.HandleFunc("GET /api/arr/status", auth(h.handleArrStatus))
 	h.mux.HandleFunc("POST /api/arr/setup", auth(h.handleArrSetup))
+	h.mux.HandleFunc("POST /api/strm/refresh", auth(h.handleStrmRefresh))
+	h.mux.HandleFunc("GET /api/sync/history", auth(h.handleSyncHistory))
 
 	// Serve embedded static frontend; fall back to index.html for SPA routing
 	if staticFS != nil {
@@ -1333,4 +1341,53 @@ func resolveSentinel(incoming, stored string) string {
 		return stored
 	}
 	return incoming
+}
+
+func (h *Handler) handleStrmRefresh(w http.ResponseWriter, r *http.Request) {
+	if h.writer == nil {
+		http.Error(w, "strm writer not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if !h.refreshing.CompareAndSwap(false, true) {
+		http.Error(w, "refresh already in progress", http.StatusServiceUnavailable)
+		return
+	}
+	defer h.refreshing.Store(false)
+
+	h.cfgMu.RLock()
+	xc := xtream.NewClient(h.cfg.Xtream.URL, h.cfg.Xtream.Username, h.cfg.Xtream.Password)
+	h.cfgMu.RUnlock()
+
+	buildURL := func(streamType, streamIDStr, ext string) (string, error) {
+		id, err := strconv.Atoi(streamIDStr)
+		if err != nil {
+			return "", fmt.Errorf("invalid stream id %q: %w", streamIDStr, err)
+		}
+		url := xc.BuildStreamURL(streamType, id, ext)
+		if url == "" {
+			return "", fmt.Errorf("unknown stream type %q", streamType)
+		}
+		return url, nil
+	}
+
+	n, err := h.writer.RefreshURLs(buildURL)
+	if err != nil {
+		slog.Warn("strm refresh completed with errors", "rewritten", n, "error", err)
+	} else {
+		slog.Info("strm refresh complete", "rewritten", n)
+	}
+
+	resp := map[string]interface{}{"rewritten": n}
+	if err != nil {
+		resp["error"] = err.Error()
+	}
+	h.writeJSON(w, resp)
+}
+
+func (h *Handler) handleSyncHistory(w http.ResponseWriter, r *http.Request) {
+	history := h.scheduler.SyncHistory()
+	if history == nil {
+		history = []vodarrsync.SyncRun{}
+	}
+	h.writeJSON(w, history)
 }

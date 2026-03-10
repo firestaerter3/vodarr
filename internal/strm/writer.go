@@ -2,6 +2,8 @@ package strm
 
 import (
 	"fmt"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -167,6 +169,85 @@ func (w *Writer) RemoveSeries(name string) error {
 		return fmt.Errorf("remove series dir %s: %w", absDir, err)
 	}
 	return nil
+}
+
+// xtreamURLRe matches Xtream stream URLs of the form:
+//
+//	{scheme}://{host}/{movie|series}/{user}/{pass}/{id}.{ext}
+//
+// Capture groups: (1) scheme+host, (2) stream type, (3) stream ID, (4) extension.
+var xtreamURLRe = regexp.MustCompile(`^https?://[^/]+/(movie|series)/[^/]+/[^/]+/(\d+)\.([^/\n]+)$`)
+
+// RefreshURLs walks the output directory, finds every .strm file, and rewrites
+// its URL using buildURL(streamType, streamID, ext). Files whose URL does not
+// match the Xtream pattern are skipped. Returns the number of files rewritten
+// and the first error encountered (processing continues past errors).
+func (w *Writer) RefreshURLs(buildURL func(streamType, streamID, ext string) (string, error)) (int, error) {
+	absOutput, err := filepath.Abs(w.outputPath)
+	if err != nil {
+		return 0, fmt.Errorf("abs output path: %w", err)
+	}
+
+	count := 0
+	var firstErr error
+
+	_ = filepath.WalkDir(absOutput, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil // skip unreadable entries
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".strm") {
+			return nil
+		}
+
+		// Path traversal guard
+		absPath, absErr := filepath.Abs(path)
+		if absErr != nil || !strings.HasPrefix(absPath+string(filepath.Separator), absOutput+string(filepath.Separator)) {
+			slog.Warn("strm refresh: skipping file outside output dir", "path", path)
+			return nil
+		}
+
+		data, readErr := os.ReadFile(absPath)
+		if readErr != nil {
+			if firstErr == nil {
+				firstErr = readErr
+			}
+			slog.Warn("strm refresh: read failed", "path", absPath, "error", readErr)
+			return nil
+		}
+
+		rawURL := strings.TrimSpace(string(data))
+		m := xtreamURLRe.FindStringSubmatch(rawURL)
+		if m == nil {
+			// Not an Xtream URL — skip silently
+			return nil
+		}
+
+		streamType, streamIDStr, ext := m[1], m[2], m[3]
+
+		newURL, buildErr := buildURL(streamType, streamIDStr, ext)
+		if buildErr != nil {
+			if firstErr == nil {
+				firstErr = buildErr
+			}
+			slog.Warn("strm refresh: buildURL failed", "path", absPath, "error", buildErr)
+			return nil
+		}
+		if newURL == "" || newURL == rawURL {
+			return nil // unknown type or no change needed
+		}
+
+		if writeErr := os.WriteFile(absPath, []byte(newURL+"\n"), 0644); writeErr != nil {
+			if firstErr == nil {
+				firstErr = writeErr
+			}
+			slog.Warn("strm refresh: write failed", "path", absPath, "error", writeErr)
+			return nil
+		}
+		count++
+		return nil
+	})
+
+	return count, firstErr
 }
 
 var illegalChars = regexp.MustCompile(`[<>:"/\\|?*]`)

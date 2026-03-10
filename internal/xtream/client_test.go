@@ -136,3 +136,26 @@ func TestExhaustsRetries(t *testing.T) {
 		t.Errorf("error message = %q, want to contain 'after 3 retries'", err.Error())
 	}
 }
+
+func TestBuildStreamURL(t *testing.T) {
+	c := NewClient("http://server:8080", "user", "pass")
+
+	cases := []struct {
+		streamType string
+		id         int
+		ext        string
+		want       string
+	}{
+		{"movie", 42, "mkv", "http://server:8080/movie/user/pass/42.mkv"},
+		{"series", 99, "ts", "http://server:8080/series/user/pass/99.ts"},
+		{"movie", 1, "", "http://server:8080/movie/user/pass/1.mkv"},   // default ext
+		{"series", 1, "", "http://server:8080/series/user/pass/1.mkv"}, // default ext
+		{"unknown", 1, "mkv", ""},
+	}
+	for _, tc := range cases {
+		got := c.BuildStreamURL(tc.streamType, tc.id, tc.ext)
+		if got != tc.want {
+			t.Errorf("BuildStreamURL(%q, %d, %q) = %q, want %q", tc.streamType, tc.id, tc.ext, got, tc.want)
+		}
+	}
+}

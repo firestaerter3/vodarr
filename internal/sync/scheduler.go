@@ -101,6 +101,18 @@ func cleanTitleForSearch(name string, patterns []*regexp.Regexp) string {
 	return strings.TrimSpace(title)
 }
 
+// SyncRun records the outcome of a single sync run.
+type SyncRun struct {
+	StartedAt  time.Time `json:"started_at"`
+	DurationMs int64     `json:"duration_ms"`
+	Found      int       `json:"found"`
+	Enriched   int       `json:"enriched"`
+	Unenriched int       `json:"unenriched"`
+	Retained   int       `json:"retained"`
+	Expired    int       `json:"expired"`
+	Error      string    `json:"error,omitempty"`
+}
+
 // Status describes the current sync state.
 type Status struct {
 	Running     bool      `json:"running"`
@@ -110,6 +122,11 @@ type Status struct {
 	TotalSeries int       `json:"total_series"`
 	Error       string    `json:"error,omitempty"`
 	Progress    Progress  `json:"progress"`
+
+	LastSyncDurationMs int64 `json:"last_sync_duration_ms"`
+	UnenrichedCount    int   `json:"unenriched_count"`
+	GraceRetained      int   `json:"grace_retained"`
+	LastExpired        int   `json:"last_expired"`
 }
 
 // Progress tracks current sync progress.
@@ -134,8 +151,11 @@ type Scheduler struct {
 	mu      gosync.RWMutex // 3A: protects status field
 	syncMu  gosync.Mutex   // 3B: serialises concurrent Sync calls
 	status  Status
+	syncHistory []SyncRun  // rolling log, capped at syncHistoryCap, protected by mu
 	cancel  context.CancelFunc
 }
+
+const syncHistoryCap = 20
 
 func NewScheduler(cfg *config.Config, xc *xtream.Client, tc *tmdb.Client, idx *index.Index, w *strm.Writer) *Scheduler {
 	var patterns []*regexp.Regexp
@@ -212,6 +232,15 @@ func (s *Scheduler) Status() Status {
 	return st
 }
 
+// SyncHistory returns a copy of the rolling sync run history (most recent first).
+func (s *Scheduler) SyncHistory() []SyncRun {
+	s.mu.RLock()
+	out := make([]SyncRun, len(s.syncHistory))
+	copy(out, s.syncHistory)
+	s.mu.RUnlock()
+	return out
+}
+
 // Sync performs a full catalog sync: fetch → enrich → replace index.
 // If a sync is already in progress, this call returns immediately (3B).
 func (s *Scheduler) Sync(ctx context.Context) error {
@@ -222,22 +251,37 @@ func (s *Scheduler) Sync(ctx context.Context) error {
 	}
 	defer s.syncMu.Unlock()
 
+	startedAt := time.Now()
 	s.setRunning(true, "")
 	slog.Info("sync started")
 
+	var syncErr error
+	var retainedCount, expiredCount int
+
 	defer func() {
+		durationMs := time.Since(startedAt).Milliseconds()
 		s.setRunning(false, "")
+		now := time.Now()
 		s.mu.Lock()
-		s.status.LastSync = time.Now()
-		s.status.NextSync = time.Now().Add(s.cfg.Sync.ParsedInterval)
+		s.status.LastSync = now
+		s.status.NextSync = now.Add(s.cfg.Sync.ParsedInterval)
+		s.status.LastSyncDurationMs = durationMs
+		s.status.GraceRetained = retainedCount
+		s.status.LastExpired = expiredCount
 		s.mu.Unlock()
 	}()
 
 	items, err := s.fetchAll(ctx)
 	if err != nil {
+		errMsg := err.Error()
 		s.mu.Lock()
-		s.status.Error = err.Error()
+		s.status.Error = errMsg
 		s.mu.Unlock()
+		s.appendSyncRun(SyncRun{
+			StartedAt:  startedAt,
+			DurationMs: time.Since(startedAt).Milliseconds(),
+			Error:      errMsg,
+		})
 		return fmt.Errorf("fetch: %w", err)
 	}
 
@@ -257,6 +301,18 @@ func (s *Scheduler) Sync(ctx context.Context) error {
 	if err != nil {
 		// Enrichment errors are non-fatal; we log and use what we have
 		slog.Warn("enrichment completed with errors", "error", err)
+		syncErr = err
+	}
+
+	// Count enriched vs unenriched after enrichment step.
+	enrichedCount := 0
+	unenrichedCount := 0
+	for _, item := range enriched {
+		if item.IMDBId != "" || item.TVDBId != "" {
+			enrichedCount++
+		} else {
+			unenrichedCount++
+		}
 	}
 
 	// Advance the generation counter and stamp all fresh items as current.
@@ -299,6 +355,9 @@ func (s *Scheduler) Sync(ctx context.Context) error {
 			}
 		}
 
+		retainedCount = len(retained)
+		expiredCount = len(expired)
+
 		if len(retained) > 0 {
 			slog.Info("grace period: retaining items temporarily missing from provider",
 				"count", len(retained))
@@ -315,11 +374,41 @@ func (s *Scheduler) Sync(ctx context.Context) error {
 	movies, series := s.idx.Counts()
 	slog.Info("sync complete", "movies", movies, "series", series)
 
+	// Update unenriched count in status.
+	s.mu.Lock()
+	s.status.UnenrichedCount = unenrichedCount
+	s.mu.Unlock()
+
 	if err := SaveIndexCache(s.cachePath, merged, s.syncGen); err != nil {
 		slog.Warn("index cache save failed", "error", err)
 	}
 
+	errStr := ""
+	if syncErr != nil {
+		errStr = syncErr.Error()
+	}
+	s.appendSyncRun(SyncRun{
+		StartedAt:  startedAt,
+		DurationMs: time.Since(startedAt).Milliseconds(),
+		Found:      len(items),
+		Enriched:   enrichedCount,
+		Unenriched: unenrichedCount,
+		Retained:   retainedCount,
+		Expired:    expiredCount,
+		Error:      errStr,
+	})
+
 	return nil
+}
+
+// appendSyncRun prepends run to syncHistory, capping at syncHistoryCap entries.
+func (s *Scheduler) appendSyncRun(run SyncRun) {
+	s.mu.Lock()
+	s.syncHistory = append([]SyncRun{run}, s.syncHistory...)
+	if len(s.syncHistory) > syncHistoryCap {
+		s.syncHistory = s.syncHistory[:syncHistoryCap]
+	}
+	s.mu.Unlock()
 }
 
 // cleanupExpired removes .strm/.mkv directories for items that have exceeded
