@@ -108,6 +108,21 @@ func Save(path string, cfg *Config) error {
 	return nil
 }
 
+// CheckWritable verifies that path is (or can be created as) a writable directory
+// by creating and immediately removing a probe file. Returns nil on success.
+func CheckWritable(path string) error {
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return fmt.Errorf("output path not writable: %w", err)
+	}
+	probe, err := os.CreateTemp(path, ".vodarr-write-test-*")
+	if err != nil {
+		return fmt.Errorf("output path not writable: %w", err)
+	}
+	probe.Close()
+	os.Remove(probe.Name())
+	return nil
+}
+
 // Validate checks that all required config fields are set and valid.
 func (c *Config) Validate() error {
 	return c.validate()

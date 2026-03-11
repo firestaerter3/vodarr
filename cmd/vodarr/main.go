@@ -54,6 +54,11 @@ func main() {
 		"web_port", cfg.Server.WebPort,
 	)
 
+	// Warn early if output path is not writable (non-fatal: mount may arrive after start).
+	if err := config.CheckWritable(cfg.Output.Path); err != nil {
+		slog.Warn("output path check failed — syncs will fail until this is resolved", "error", err)
+	}
+
 	// Build components
 	xc := xtream.NewClient(cfg.Xtream.URL, cfg.Xtream.Username, cfg.Xtream.Password)
 	tc := tmdb.NewClient(cfg.TMDB.APIKey)

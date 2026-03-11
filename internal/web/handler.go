@@ -401,6 +401,13 @@ func (h *Handler) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := config.CheckWritable(newCfg.Output.Path); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
 	if err := config.Save(h.cfgPath, &newCfg); err != nil {
 		slog.Error("failed to save config", "error", err)
 		w.Header().Set("Content-Type", "application/json")

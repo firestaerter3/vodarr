@@ -98,7 +98,7 @@ func TestPutConfigPersistsAndResolveSentinel(t *testing.T) {
 			"password": passwordSentinel,
 		},
 		"tmdb":   map[string]interface{}{"api_key": passwordSentinel},
-		"output": map[string]interface{}{"path": "/data/strm", "movies_dir": "movies", "series_dir": "tv"},
+		"output": map[string]interface{}{"path": dir, "movies_dir": "movies", "series_dir": "tv"},
 		"sync":   map[string]interface{}{"interval": "12h", "on_startup": false},
 		"server": map[string]interface{}{"newznab_port": 7878, "qbit_port": 8080, "web_port": 3000},
 		"logging": map[string]interface{}{"level": "debug"},
@@ -192,7 +192,7 @@ func TestPutConfigPreservesServerSensitiveFields(t *testing.T) {
 	body := map[string]interface{}{
 		"xtream":  map[string]interface{}{"url": "http://x.com", "username": "u", "password": "p"},
 		"tmdb":    map[string]interface{}{"api_key": "key"},
-		"output":  map[string]interface{}{"path": "/data"},
+		"output":  map[string]interface{}{"path": dir},
 		"sync":    map[string]interface{}{"interval": "6h"},
 		"server":  map[string]interface{}{"newznab_port": 9999, "qbit_port": 8080, "web_port": 3000},
 		"logging": map[string]interface{}{"level": "info"},
@@ -559,7 +559,7 @@ func TestPutConfigArrSentinelResolution(t *testing.T) {
 	body := map[string]interface{}{
 		"xtream":  map[string]interface{}{"url": "http://x.com", "username": "u", "password": "p"},
 		"tmdb":    map[string]interface{}{"api_key": "key"},
-		"output":  map[string]interface{}{"path": "/data"},
+		"output":  map[string]interface{}{"path": dir},
 		"sync":    map[string]interface{}{"interval": "6h"},
 		"server":  map[string]interface{}{"newznab_port": 7878, "qbit_port": 8080, "web_port": 3000},
 		"logging": map[string]interface{}{"level": "info"},
