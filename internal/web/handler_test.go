@@ -442,7 +442,9 @@ func TestWebhookDownloadDeletesMkv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := makeHandler(minimalCfg(), "")
+	cfg := minimalCfg()
+	cfg.Output.Path = dir // files live inside the output directory
+	h := makeHandler(cfg, "")
 	payload := map[string]interface{}{
 		"eventType": "Download",
 		"episodeFile": map[string]string{

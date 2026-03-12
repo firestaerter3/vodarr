@@ -15,10 +15,24 @@ func newTestClient(srv *httptest.Server) *Client {
 	return c
 }
 
+// requireBearer is a handler middleware that rejects requests without the expected Bearer token.
+func requireBearer(t *testing.T, apiKey string, next http.HandlerFunc) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		want := "Bearer " + apiKey
+		if got := r.Header.Get("Authorization"); got != want {
+			t.Errorf("Authorization header = %q, want %q", got, want)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
 // ---- Validate ----
 
 func TestValidate200(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireBearer(t, "validkey", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/authentication" {
 			http.NotFound(w, r)
 			return
@@ -70,7 +84,7 @@ func TestValidate500(t *testing.T) {
 // ---- SearchMovie ----
 
 func TestSearchMovieReturnsFirstResult(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireBearer(t, "testkey", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/search/movie" {
 			http.NotFound(w, r)
 			return

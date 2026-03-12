@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -184,6 +185,16 @@ func (c *Config) validate() error {
 	}
 	if c.Output.Path == "" {
 		return fmt.Errorf("output.path is required")
+	}
+	if !filepath.IsAbs(c.Output.Path) {
+		return fmt.Errorf("output.path must be absolute")
+	}
+	cleaned := filepath.Clean(c.Output.Path)
+	systemDirs := []string{"/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/dev", "/proc", "/sys", "/var/run"}
+	for _, blocked := range systemDirs {
+		if cleaned == blocked || strings.HasPrefix(cleaned, blocked+"/") {
+			return fmt.Errorf("output.path must not be a system directory")
+		}
 	}
 
 	d, err := time.ParseDuration(c.Sync.Interval)

@@ -111,6 +111,21 @@ func TestValidateRequiredFields(t *testing.T) {
 			wantErr: "output.path is required",
 		},
 		{
+			name:    "relative output path",
+			mutate:  func(c *Config) { c.Output.Path = "relative/path" },
+			wantErr: "output.path must be absolute",
+		},
+		{
+			name:    "output path in /etc",
+			mutate:  func(c *Config) { c.Output.Path = "/etc/vodarr" },
+			wantErr: "output.path must not be a system directory",
+		},
+		{
+			name:    "output path is /proc",
+			mutate:  func(c *Config) { c.Output.Path = "/proc" },
+			wantErr: "output.path must not be a system directory",
+		},
+		{
 			name:    "invalid interval",
 			mutate:  func(c *Config) { c.Sync.Interval = "bogus" },
 			wantErr: "sync.interval is invalid",

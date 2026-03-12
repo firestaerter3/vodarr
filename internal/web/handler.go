@@ -65,6 +65,9 @@ func NewHandler(idx *index.Index, scheduler *vodarrsync.Scheduler, writer *strm.
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -327,6 +330,7 @@ type putConfigRequest struct {
 }
 
 func (h *Handler) handlePutConfig(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	var req putConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
@@ -427,6 +431,7 @@ type testXtreamRequest struct {
 }
 
 func (h *Handler) handleTestXtream(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10) // 64 KB
 	var req testXtreamRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
@@ -438,6 +443,11 @@ func (h *Handler) handleTestXtream(w http.ResponseWriter, r *http.Request) {
 	h.cfgMu.RUnlock()
 
 	password := resolveSentinel(req.Password, storedPassword)
+
+	if err := validateURLScheme(req.URL); err != nil {
+		h.writeJSON(w, map[string]interface{}{"success": false, "error": "invalid URL: " + err.Error()})
+		return
+	}
 
 	// Use Background context so Brave/HTTP2 connection cancellation doesn't abort the outbound request
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -462,6 +472,7 @@ type testTMDBRequest struct {
 }
 
 func (h *Handler) handleTestTMDB(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10) // 64 KB
 	var req testTMDBRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
@@ -494,6 +505,7 @@ type testTVDBRequest struct {
 }
 
 func (h *Handler) handleTestTVDB(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10) // 64 KB
 	var req testTVDBRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
@@ -523,6 +535,7 @@ func (h *Handler) handleTestTVDB(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleArrTest(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10) // 64 KB
 	var req struct {
 		URL    string `json:"url"`
 		APIKey string `json:"api_key"`
@@ -543,6 +556,11 @@ func (h *Handler) handleArrTest(w http.ResponseWriter, r *http.Request) {
 	h.cfgMu.RUnlock()
 
 	apiKey := resolveSentinel(req.APIKey, storedKey)
+
+	if err := validateURLScheme(req.URL); err != nil {
+		h.writeJSON(w, map[string]interface{}{"success": false, "error": "invalid URL: " + err.Error()})
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -585,6 +603,7 @@ func (h *Handler) handleRestart(w http.ResponseWriter, r *http.Request) {
 // Deletes the .mkv stub when a matching .strm sibling exists.
 // Always returns 200 (arr retries on non-2xx).
 func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10) // 64 KB
 	var payload struct {
 		EventType   string `json:"eventType"`
 		EpisodeFile struct {
@@ -627,6 +646,21 @@ func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("webhook: received non-absolute path, ignoring", "path", mkvPath)
 		h.writeJSON(w, map[string]string{"status": "ok"})
 		return
+	}
+
+	// Safety: path must be contained within the configured output directory
+	h.cfgMu.RLock()
+	outputPath := h.cfg.Output.Path
+	h.cfgMu.RUnlock()
+	if outputPath != "" {
+		absPath, _ := filepath.Abs(mkvPath)
+		absOutput, _ := filepath.Abs(outputPath)
+		sep := string(filepath.Separator)
+		if !strings.HasPrefix(absPath+sep, absOutput+sep) {
+			slog.Warn("webhook: path outside output directory, ignoring", "path", mkvPath)
+			h.writeJSON(w, map[string]string{"status": "ok"})
+			return
+		}
 	}
 
 	// Only delete if a .strm sibling exists (confirms VODarr managed this download)
@@ -806,6 +840,7 @@ type arrSetupRequest struct {
 }
 
 func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10) // 64 KB
 	var req arrSetupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
@@ -825,6 +860,11 @@ func (h *Handler) handleArrSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	if inst == nil {
 		http.Error(w, `{"error":"instance not found"}`, http.StatusNotFound)
+		return
+	}
+
+	if err := validateURLScheme(inst.URL); err != nil {
+		http.Error(w, `{"error":"instance URL is invalid: `+err.Error()+`"}`, http.StatusBadRequest)
 		return
 	}
 
