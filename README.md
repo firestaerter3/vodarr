@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/public/favicon.svg" alt="VODarr logo" width="64" />
+  <img src="docs/logo.svg" alt="VODarr — IPTV → arr bridge" width="220" />
 </p>
 
 # VODarr

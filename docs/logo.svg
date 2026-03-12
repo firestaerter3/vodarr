@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 72" width="220" height="72">
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Icon box with lime glow -->
+  <rect x="0" y="4" width="40" height="40" rx="8" fill="#a3e635" filter="url(#glow)"/>
+
+  <!-- Checkmark -->
+  <path d="M9 24L17.5 32.5L31 15.5" stroke="#07080f" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- VOD (grey) -->
+  <text x="52" y="33"
+    font-family="ui-sans-serif, system-ui, -apple-system, sans-serif"
+    font-weight="800"
+    font-size="26"
+    fill="#b0bec5"
+    letter-spacing="-0.5">VOD</text>
+
+  <!-- arr (lime) -->
+  <text x="107" y="33"
+    font-family="ui-sans-serif, system-ui, -apple-system, sans-serif"
+    font-weight="800"
+    font-size="26"
+    fill="#a3e635"
+    letter-spacing="-0.5">arr</text>
+
+  <!-- Subtitle -->
+  <text x="1" y="60"
+    font-family="ui-monospace, 'SF Mono', monospace"
+    font-size="10.5"
+    fill="#546e7a"
+    letter-spacing="2.5">IPTV → ARR BRIDGE</text>
+</svg>
