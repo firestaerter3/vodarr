@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="web/public/favicon.svg" alt="VODarr logo" width="64" />
+</p>
+
 # VODarr
 
 Bridges an Xtream Codes IPTV provider with Sonarr and Radarr. Search your IPTV catalog through the standard \*arr interface, "download" content as `.strm` files, and play directly in Jellyfin — no video is ever downloaded to disk.
@@ -101,6 +105,7 @@ sync:
   interval: "6h"                      # Go duration: 1h, 6h, 24h, etc.
   on_startup: true
   parallelism: 10                     # Concurrent workers for TMDB enrichment (1–20)
+  grace_cycles: 3                     # Syncs to retain items missing from provider before removing (0 = immediate)
   # title_cleanup_patterns:           # Regex patterns stripped from stream names before TMDB search
   #   - '\s*\(DUBBED\)'
   #   - '\s*\[EXTENDED\]'
@@ -132,6 +137,26 @@ logging:
 #       url: "http://<host>:7878"
 #       api_key: "<api-key>"
 ```
+
+## Dashboard & monitoring
+
+The web UI dashboard shows live sync statistics including total items, unenriched count, grace-retained items, last expired items, and the duration of the most recent sync. A **Sync History** table lists the last 20 sync runs with per-run counts, refreshed automatically every 5 seconds.
+
+## Grace period for provider outages
+
+When a title disappears from the provider catalog (e.g. during a temporary outage), VODarr retains it in the index for a configurable number of syncs before removing its `.strm` files. This prevents Sonarr/Radarr from losing track of content during short-lived outages.
+
+Configure via `sync.grace_cycles` (default: 3). Set to `0` to remove items immediately on the next sync that doesn't return them.
+
+## Refreshing stream URLs
+
+If you change your Xtream password, all existing `.strm` files will point to the old credentials. After updating the config, trigger a full rewrite without running a new sync:
+
+```
+POST /api/strm/refresh
+```
+
+This rewrites every `.strm` file on disk with the current credentials from the config.
 
 ## Architecture & design decisions
 
