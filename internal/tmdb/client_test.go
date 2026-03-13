@@ -15,13 +15,12 @@ func newTestClient(srv *httptest.Server) *Client {
 	return c
 }
 
-// requireBearer is a handler middleware that rejects requests without the expected Bearer token.
-func requireBearer(t *testing.T, apiKey string, next http.HandlerFunc) http.HandlerFunc {
+// requireAPIKey is a handler middleware that rejects requests without the expected api_key query param.
+func requireAPIKey(t *testing.T, apiKey string, next http.HandlerFunc) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
-		want := "Bearer " + apiKey
-		if got := r.Header.Get("Authorization"); got != want {
-			t.Errorf("Authorization header = %q, want %q", got, want)
+		if got := r.URL.Query().Get("api_key"); got != apiKey {
+			t.Errorf("api_key query param = %q, want %q", got, apiKey)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -32,13 +31,13 @@ func requireBearer(t *testing.T, apiKey string, next http.HandlerFunc) http.Hand
 // ---- Validate ----
 
 func TestValidate200(t *testing.T) {
-	srv := httptest.NewServer(requireBearer(t, "validkey", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/authentication" {
+	srv := httptest.NewServer(requireAPIKey(t, "validkey", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/configuration" {
 			http.NotFound(w, r)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"success":true}`))
+		w.Write([]byte(`{"images":{}}`))
 	}))
 	defer srv.Close()
 
@@ -84,7 +83,7 @@ func TestValidate500(t *testing.T) {
 // ---- SearchMovie ----
 
 func TestSearchMovieReturnsFirstResult(t *testing.T) {
-	srv := httptest.NewServer(requireBearer(t, "testkey", func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(requireAPIKey(t, "testkey", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/search/movie" {
 			http.NotFound(w, r)
 			return

@@ -54,15 +54,14 @@ func NewClient(apiKey string) *Client {
 // Validate checks that the API key is accepted by TMDB.
 // It bypasses the rate limiter and cache, making a direct HTTP request.
 func (c *Client) Validate(ctx context.Context) error {
-	u := c.baseURL + "/authentication"
+	u := c.baseURL + "/configuration?api_key=" + c.apiKey
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("http get /authentication: %w", err)
+		return fmt.Errorf("http get /configuration: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -311,13 +310,15 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out in
 			q.Set(k, v)
 		}
 	}
+	// TMDB v3 API key auth — append as query parameter.
+	// The configured api_key is a v3 key and must not be sent as a Bearer token.
+	q.Set("api_key", c.apiKey)
 	u += "?" + q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("http get %s: %w", path, err)
