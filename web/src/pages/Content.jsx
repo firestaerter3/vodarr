@@ -45,13 +45,20 @@ function MatchBadge({ item }) {
     </span>
   )
   return (
-    <span
-      className="badge-idle inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[10px] cursor-help"
-      title={item.enrich_fail_reason || 'No TMDB/IMDB/TVDB match found'}
-    >
+    <span className="badge-idle inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[10px]">
       <span className="w-1 h-1 rounded-full bg-steel-500" />
       UNMATCHED
     </span>
+  )
+}
+
+function FailReason({ item }) {
+  const reason = item.enrich_fail_reason
+  if (!reason) return null
+  return (
+    <p className="font-mono text-[10px] text-red-400/60 truncate mt-0.5">
+      {reason}
+    </p>
   )
 }
 
@@ -219,11 +226,6 @@ export default function Content({ initialFilter = 'all', onFilterChange }) {
       </div>
 
       {/* Active filter hint */}
-      {filter === 'unmatched' && (
-        <div className="mb-3 px-3 py-2 rounded bg-amber-400/5 border border-amber-400/15 font-mono text-[11px] text-amber-400/80 animate-fade-up">
-          Hover an UNMATCHED badge to see why enrichment failed.
-        </div>
-      )}
       {filter === 'grace' && graceCycles > 0 && (
         <div className="mb-3 px-3 py-2 rounded bg-amber-400/5 border border-amber-400/15 font-mono text-[11px] text-amber-400/80 animate-fade-up">
           These items are missing from the provider and will be cleaned up after the grace period expires.
@@ -268,6 +270,7 @@ export default function Content({ initialFilter = 'all', onFilterChange }) {
                       {item.CanonicalName}
                     </p>
                   )}
+                  <FailReason item={item} />
                 </div>
                 <p className="font-mono text-[11px] text-steel-500 w-10 text-right">
                   {item.Year || '—'}
