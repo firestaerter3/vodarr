@@ -8,6 +8,7 @@ import (
 	"regexp"
 	gosync "sync"
 	"testing"
+	"time"
 
 	"github.com/vodarr/vodarr/internal/config"
 	"github.com/vodarr/vodarr/internal/index"
@@ -708,27 +709,41 @@ func TestGracePeriodZeroCycles(t *testing.T) {
 	}
 }
 
-func TestSyncHistoryCapAt20(t *testing.T) {
+func TestSyncHistoryCap(t *testing.T) {
 	dir := t.TempDir()
 	srv := newSwitchableXtreamServer([]map[string]interface{}{vodStreamJSON(1, "Movie A")})
 	defer srv.close()
 	sched := buildGraceScheduler(t, srv, dir, 0)
 	ctx := context.Background()
 
-	// Run 25 syncs — history should be capped at syncHistoryCap.
-	for i := 0; i < 25; i++ {
+	// Run 25 syncs — well below syncHistoryCap, all runs must be retained.
+	const runs = 25
+	for i := 0; i < runs; i++ {
 		if err := sched.Sync(ctx); err != nil {
 			t.Fatalf("sync %d: %v", i, err)
 		}
 	}
 
 	h := sched.SyncHistory()
-	if len(h) != syncHistoryCap {
-		t.Errorf("SyncHistory len = %d, want %d", len(h), syncHistoryCap)
+	if len(h) != runs {
+		t.Errorf("SyncHistory len = %d, want %d", len(h), runs)
 	}
 	// Most recent entry should be first.
 	if h[0].StartedAt.IsZero() {
 		t.Error("first history entry has zero StartedAt")
+	}
+}
+
+func TestSyncHistoryCapEnforced(t *testing.T) {
+	// Verify the cap is enforced by calling appendSyncRun via a zero-value
+	// scheduler (no index / xtream needed — appendSyncRun only touches the slice).
+	sched := &Scheduler{}
+	for i := 0; i < syncHistoryCap+10; i++ {
+		sched.appendSyncRun(SyncRun{StartedAt: time.Now()})
+	}
+	h := sched.SyncHistory()
+	if len(h) != syncHistoryCap {
+		t.Errorf("SyncHistory len = %d, want cap %d", len(h), syncHistoryCap)
 	}
 }
 

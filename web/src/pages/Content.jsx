@@ -16,6 +16,17 @@ function useContent(type) {
   return { items: data?.items ?? [], total: data?.total ?? 0, loading }
 }
 
+function useStatus() {
+  const [status, setStatus] = useState(null)
+  useEffect(() => {
+    fetch('/api/status')
+      .then(r => r.json())
+      .then(setStatus)
+      .catch(() => {})
+  }, [])
+  return status
+}
+
 function MatchBadge({ item }) {
   const hasIMDB = !!item.IMDBId
   const hasTVDB = !!item.TVDBId
@@ -34,9 +45,33 @@ function MatchBadge({ item }) {
     </span>
   )
   return (
-    <span className="badge-idle inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[10px]">
+    <span
+      className="badge-idle inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[10px] cursor-help"
+      title={item.enrich_fail_reason || 'No TMDB/IMDB/TVDB match found'}
+    >
       <span className="w-1 h-1 rounded-full bg-steel-500" />
       UNMATCHED
+    </span>
+  )
+}
+
+function GraceBadge({ item, syncGen, graceCycles }) {
+  if (!item.MissingSince || !graceCycles) return null
+  const cyclesLeft = graceCycles - (syncGen - item.MissingSince)
+  const label = cyclesLeft <= 1 ? 'EXPIRING' : 'GRACE'
+  const isUrgent = cyclesLeft <= 1
+  return (
+    <span
+      className={[
+        'inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[10px] cursor-help',
+        isUrgent
+          ? 'bg-red-500/10 text-red-400 border border-red-500/20'
+          : 'bg-amber-400/10 text-amber-400 border border-amber-400/20',
+      ].join(' ')}
+      title={`Missing from provider — ${Math.max(0, cyclesLeft)} sync${cyclesLeft !== 1 ? 's' : ''} until cleanup`}
+    >
+      <span className={`w-1 h-1 rounded-full ${isUrgent ? 'bg-red-400' : 'bg-amber-400'}`} />
+      {label} {Math.max(0, cyclesLeft)}
     </span>
   )
 }
@@ -51,14 +86,30 @@ function IDChip({ label, value }) {
   )
 }
 
-export default function Content() {
+export default function Content({ initialFilter = 'all', onFilterChange }) {
   const [tab, setTab] = useState('movies')
   const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState('all')
+  const [filter, setFilter] = useState(initialFilter)
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 50
 
+  const status = useStatus()
+  const syncGen = status?.sync_gen ?? 0
+  const graceCycles = status?.grace_cycles ?? 0
+
   const { items, total, loading } = useContent(tab)
+
+  // Sync external filter changes (e.g. navigation from Dashboard).
+  useEffect(() => {
+    setFilter(initialFilter)
+    setPage(1)
+  }, [initialFilter])
+
+  const setFilterAndNotify = (f) => {
+    setFilter(f)
+    setPage(1)
+    onFilterChange?.(f)
+  }
 
   const filtered = useMemo(() => {
     let list = items
@@ -73,6 +124,7 @@ export default function Content() {
       : (i.IMDBId || i.TVDBId)
     if (filter === 'matched') list = list.filter(isMatched)
     if (filter === 'unmatched') list = list.filter(i => !isMatched(i))
+    if (filter === 'grace') list = list.filter(i => i.MissingSince > 0)
     return list
   }, [items, query, filter, tab])
 
@@ -84,6 +136,15 @@ export default function Content() {
     : (i.IMDBId || i.TVDBId)
   const matchedCount = items.filter(isMatched).length
   const matchRate = items.length > 0 ? Math.round((matchedCount / items.length) * 100) : 0
+  const unmatchedCount = items.filter(i => !isMatched(i)).length
+  const graceCount = items.filter(i => i.MissingSince > 0).length
+
+  const filterOptions = [
+    { id: 'all', label: 'All' },
+    { id: 'matched', label: 'Matched' },
+    { id: 'unmatched', label: `Unmatched${unmatchedCount > 0 ? ` (${unmatchedCount})` : ''}` },
+    ...(graceCycles > 0 ? [{ id: 'grace', label: `Grace${graceCount > 0 ? ` (${graceCount})` : ''}` }] : []),
+  ]
 
   return (
     <div className="p-8">
@@ -148,22 +209,35 @@ export default function Content() {
         </div>
         <select
           value={filter}
-          onChange={e => { setFilter(e.target.value); setPage(1) }}
+          onChange={e => setFilterAndNotify(e.target.value)}
           className="px-3 py-2 bg-void-800 border border-void-600 rounded font-mono text-[12px] text-steel-400"
         >
-          <option value="all">All</option>
-          <option value="matched">Matched</option>
-          <option value="unmatched">Unmatched</option>
+          {filterOptions.map(({ id, label }) => (
+            <option key={id} value={id}>{label}</option>
+          ))}
         </select>
       </div>
+
+      {/* Active filter hint */}
+      {filter === 'unmatched' && (
+        <div className="mb-3 px-3 py-2 rounded bg-amber-400/5 border border-amber-400/15 font-mono text-[11px] text-amber-400/80 animate-fade-up">
+          Hover an UNMATCHED badge to see why enrichment failed.
+        </div>
+      )}
+      {filter === 'grace' && graceCycles > 0 && (
+        <div className="mb-3 px-3 py-2 rounded bg-amber-400/5 border border-amber-400/15 font-mono text-[11px] text-amber-400/80 animate-fade-up">
+          These items are missing from the provider and will be cleaned up after the grace period expires.
+        </div>
+      )}
 
       {/* Table */}
       <div className="border border-void-600 rounded-lg overflow-hidden animate-fade-up animate-fade-up-4">
         {/* Table header */}
-        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-4 px-4 py-2.5 bg-void-700/50 border-b border-void-600">
+        <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 px-4 py-2.5 bg-void-700/50 border-b border-void-600">
           <p className="font-mono text-[10px] text-steel-500 uppercase tracking-widest">Title</p>
           <p className="font-mono text-[10px] text-steel-500 uppercase tracking-widest">Year</p>
           <p className="font-mono text-[10px] text-steel-500 uppercase tracking-widest">IDs</p>
+          <p className="font-mono text-[10px] text-steel-500 uppercase tracking-widest">Grace</p>
           <p className="font-mono text-[10px] text-steel-500 uppercase tracking-widest">Match</p>
         </div>
 
@@ -175,7 +249,7 @@ export default function Content() {
         ) : pageItems.length === 0 ? (
           <div className="px-4 py-12 text-center">
             <p className="font-mono text-[12px] text-steel-500">
-              {query ? 'No results for that query.' : 'No items indexed yet — run a sync first.'}
+              {query ? 'No results for that query.' : filter !== 'all' ? `No ${filter} items.` : 'No items indexed yet — run a sync first.'}
             </p>
           </div>
         ) : (
@@ -183,11 +257,18 @@ export default function Content() {
             {pageItems.map((item, i) => (
               <div
                 key={`${item.XtreamID}-${i}`}
-                className="table-row grid grid-cols-[1fr_auto_auto_auto] gap-4 px-4 py-2.5 items-center"
+                className="table-row grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 px-4 py-2.5 items-center"
               >
-                <p className="font-display font-500 text-[13px] text-steel-300 truncate">
-                  {item.Name}
-                </p>
+                <div className="min-w-0">
+                  <p className="font-display font-500 text-[13px] text-steel-300 truncate">
+                    {item.Name}
+                  </p>
+                  {item.CanonicalName && item.CanonicalName !== item.Name && (
+                    <p className="font-mono text-[10px] text-steel-600 truncate mt-0.5">
+                      {item.CanonicalName}
+                    </p>
+                  )}
+                </div>
                 <p className="font-mono text-[11px] text-steel-500 w-10 text-right">
                   {item.Year || '—'}
                 </p>
@@ -195,6 +276,9 @@ export default function Content() {
                   <IDChip label="imdb" value={item.IMDBId} />
                   <IDChip label="tvdb" value={item.TVDBId} />
                   <IDChip label="tmdb" value={item.TMDBId} />
+                </div>
+                <div className="flex justify-end">
+                  <GraceBadge item={item} syncGen={syncGen} graceCycles={graceCycles} />
                 </div>
                 <div className="flex justify-end">
                   <MatchBadge item={item} />

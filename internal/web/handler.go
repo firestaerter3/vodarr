@@ -156,12 +156,17 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleMovies(w http.ResponseWriter, r *http.Request) {
+	statusFilter := r.URL.Query().Get("status")
 	all := h.idx.All()
 	var movies []*index.Item
 	for _, item := range all {
-		if item.Type == index.TypeMovie {
-			movies = append(movies, item)
+		if item.Type != index.TypeMovie {
+			continue
 		}
+		if !matchesStatusFilter(item, statusFilter) {
+			continue
+		}
+		movies = append(movies, item)
 	}
 	if movies == nil {
 		movies = []*index.Item{}
@@ -170,17 +175,35 @@ func (h *Handler) handleMovies(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleSeries(w http.ResponseWriter, r *http.Request) {
+	statusFilter := r.URL.Query().Get("status")
 	all := h.idx.All()
 	var series []*index.Item
 	for _, item := range all {
-		if item.Type == index.TypeSeries {
-			series = append(series, item)
+		if item.Type != index.TypeSeries {
+			continue
 		}
+		if !matchesStatusFilter(item, statusFilter) {
+			continue
+		}
+		series = append(series, item)
 	}
 	if series == nil {
 		series = []*index.Item{}
 	}
 	h.writeJSON(w, map[string]interface{}{"items": series, "total": len(series)})
+}
+
+// matchesStatusFilter returns true when item passes the given status filter.
+// Supported values: "unenriched", "grace". Empty or unknown = pass everything.
+func matchesStatusFilter(item *index.Item, filter string) bool {
+	switch filter {
+	case "unenriched":
+		return item.IMDBId == "" && item.TVDBId == ""
+	case "grace":
+		return item.MissingSince > 0
+	default:
+		return true
+	}
 }
 
 // configResponse is the shape returned by GET /api/config.
@@ -1436,5 +1459,35 @@ func (h *Handler) handleSyncHistory(w http.ResponseWriter, r *http.Request) {
 	if history == nil {
 		history = []vodarrsync.SyncRun{}
 	}
-	h.writeJSON(w, history)
+
+	total := len(history)
+
+	limit := 20
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			if v > 100 {
+				v = 100
+			}
+			limit = v
+		}
+	}
+
+	offset := 0
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+			offset = v
+		}
+	}
+
+	if offset >= total {
+		history = []vodarrsync.SyncRun{}
+	} else {
+		end := offset + limit
+		if end > total {
+			end = total
+		}
+		history = history[offset:end]
+	}
+
+	h.writeJSON(w, map[string]interface{}{"total": total, "runs": history})
 }

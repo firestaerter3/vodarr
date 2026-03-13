@@ -23,10 +23,14 @@ function triggerSync() {
   return fetch('/api/sync', { method: 'POST' }).then(r => r.json())
 }
 
-function StatCard({ label, value, sub, accent, delay }) {
+function StatCard({ label, value, sub, accent, delay, onClick }) {
+  const cls = [
+    `card-hover animate-fade-up animate-fade-up-${delay} border border-void-600 rounded-lg p-5 bg-void-800/60`,
+    onClick ? 'cursor-pointer hover:border-void-500 transition-colors' : '',
+  ].join(' ')
   return (
-    <div
-      className={`card-hover animate-fade-up animate-fade-up-${delay} border border-void-600 rounded-lg p-5 bg-void-800/60`}
+    <div className={cls} onClick={onClick} role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? e => { if (e.key === 'Enter' || e.key === ' ') onClick() } : undefined}
     >
       <p className="font-mono text-[10px] text-steel-500 uppercase tracking-widest mb-3">{label}</p>
       <p
@@ -36,6 +40,7 @@ function StatCard({ label, value, sub, accent, delay }) {
         {value ?? '—'}
       </p>
       {sub && <p className="mt-2 font-mono text-[11px] text-steel-500">{sub}</p>}
+      {onClick && <p className="mt-1 font-mono text-[10px] text-steel-600">View details →</p>}
     </div>
   )
 }
@@ -112,18 +117,35 @@ function useArrStatus() {
 }
 
 function useSyncHistory() {
-  const [history, setHistory] = useState([])
+  const [runs, setRuns] = useState([])
+  const [total, setTotal] = useState(0)
+  const [offset, setOffset] = useState(0)
+  const LIMIT = 20
+
+  const load = (off) =>
+    fetch(`/api/sync/history?limit=${LIMIT}&offset=${off}`)
+      .then(r => r.json())
+      .then(data => {
+        const newRuns = Array.isArray(data?.runs) ? data.runs : []
+        setTotal(data?.total ?? 0)
+        if (off === 0) {
+          setRuns(newRuns)
+        } else {
+          setRuns(prev => [...prev, ...newRuns])
+        }
+        setOffset(off)
+      })
+      .catch(() => {})
+
   useEffect(() => {
-    const load = () =>
-      fetch('/api/sync/history')
-        .then(r => r.json())
-        .then(data => setHistory(Array.isArray(data) ? data : []))
-        .catch(() => {})
-    load()
-    const id = setInterval(load, 5000)
+    load(0)
+    const id = setInterval(() => load(0), 5000)
     return () => clearInterval(id)
   }, [])
-  return history
+
+  const loadMore = () => load(runs.length)
+
+  return { runs, total, loadMore, hasMore: runs.length < total }
 }
 
 function formatDurationMs(ms) {
@@ -135,14 +157,18 @@ function formatDurationMs(ms) {
   return `${m}m ${s}s`
 }
 
-function SyncHistoryTable({ history }) {
-  if (!history || history.length === 0) return null
-  const shown = history.slice(0, 10)
+function SyncHistoryTable({ runs, total, loadMore, hasMore }) {
+  if (!runs || runs.length === 0) return null
   return (
     <div className="animate-fade-up mb-8">
-      <h2 className="font-display font-600 text-sm text-steel-400 uppercase tracking-widest mb-4">
-        Sync History
-      </h2>
+      <div className="flex items-baseline justify-between mb-4">
+        <h2 className="font-display font-600 text-sm text-steel-400 uppercase tracking-widest">
+          Sync History
+        </h2>
+        <p className="font-mono text-[10px] text-steel-600">
+          {runs.length.toLocaleString()} of {total.toLocaleString()} runs
+        </p>
+      </div>
       <div className="border border-void-600 rounded-lg overflow-hidden bg-void-800/60">
         <table className="w-full font-mono text-[11px]">
           <thead>
@@ -153,7 +179,7 @@ function SyncHistoryTable({ history }) {
             </tr>
           </thead>
           <tbody>
-            {shown.map((run, i) => (
+            {runs.map((run, i) => (
               <tr key={i} className="border-b border-void-600/50 last:border-0 hover:bg-void-700/30 transition-colors">
                 <td className="px-3 py-2 text-steel-400">{formatTime(run.started_at)}</td>
                 <td className="px-3 py-2 text-steel-300">{formatDurationMs(run.duration_ms)}</td>
@@ -168,20 +194,25 @@ function SyncHistoryTable({ history }) {
             ))}
           </tbody>
         </table>
-        {history.length > 10 && (
-          <p className="px-3 py-2 font-mono text-[10px] text-steel-600 border-t border-void-600/50">
-            Showing 10 of {history.length} runs
-          </p>
+        {hasMore && (
+          <div className="px-3 py-2 border-t border-void-600/50 text-center">
+            <button
+              onClick={loadMore}
+              className="font-mono text-[11px] text-steel-500 hover:text-steel-300 transition-colors"
+            >
+              Show more ({(total - runs.length).toLocaleString()} remaining)
+            </button>
+          </div>
         )}
       </div>
     </div>
   )
 }
 
-export default function Dashboard() {
+export default function Dashboard({ navigate }) {
   const { status, error } = useSyncStatus()
   const arrStatus = useArrStatus()
-  const syncHistory = useSyncHistory()
+  const { runs, total, loadMore, hasMore } = useSyncHistory()
   const [syncing, setSyncing] = useState(false)
 
   const arrIssues = arrStatus?.instances?.filter(i => i.issues?.length > 0) || []
@@ -250,12 +281,14 @@ export default function Dashboard() {
           value={status?.unenriched_count?.toLocaleString() ?? '—'}
           sub={status?.unenriched_count > 0 ? 'missing IMDB/TVDB ID' : undefined}
           delay={1}
+          onClick={status?.unenriched_count > 0 && navigate ? () => navigate('content', 'unmatched') : undefined}
         />
         <StatCard
           label="Grace Retained"
           value={status?.grace_retained?.toLocaleString() ?? '—'}
           sub="items on probation"
           delay={2}
+          onClick={status?.grace_retained > 0 && navigate ? () => navigate('content', 'grace') : undefined}
         />
         <StatCard
           label="Last Expired"
@@ -309,7 +342,7 @@ export default function Dashboard() {
       )}
 
       {/* Sync history */}
-      <SyncHistoryTable history={syncHistory} />
+      <SyncHistoryTable runs={runs} total={total} loadMore={loadMore} hasMore={hasMore} />
 
       {/* Setup guide */}
       <div className="animate-fade-up animate-fade-up-4">

@@ -127,6 +127,8 @@ type Status struct {
 	UnenrichedCount    int   `json:"unenriched_count"`
 	GraceRetained      int   `json:"grace_retained"`
 	LastExpired        int   `json:"last_expired"`
+	SyncGen            int   `json:"sync_gen"`
+	GraceCycles        int   `json:"grace_cycles"`
 }
 
 // Progress tracks current sync progress.
@@ -155,7 +157,7 @@ type Scheduler struct {
 	cancel  context.CancelFunc
 }
 
-const syncHistoryCap = 20
+const syncHistoryCap = 365
 
 func NewScheduler(cfg *config.Config, xc *xtream.Client, tc *tmdb.Client, idx *index.Index, w *strm.Writer) *Scheduler {
 	var patterns []*regexp.Regexp
@@ -196,11 +198,25 @@ func (s *Scheduler) Start(ctx context.Context) {
 	// immediately on restart, before the first sync finishes.
 	if cached, err := LoadIndexCache(s.cachePath); err != nil {
 		slog.Warn("index cache load failed, starting empty", "error", err)
-	} else if cached != nil && len(cached.Items) > 0 {
-		s.idx.Replace(cached.Items)
-		s.syncGen = cached.SyncGeneration
-		movies, series := s.idx.Counts()
-		slog.Info("loaded index from cache", "movies", movies, "series", series, "cached_at", cached.Timestamp, "sync_gen", s.syncGen)
+	} else if cached != nil {
+		if len(cached.Items) > 0 {
+			s.idx.Replace(cached.Items)
+			s.syncGen = cached.SyncGeneration
+			movies, series := s.idx.Counts()
+			slog.Info("loaded index from cache", "movies", movies, "series", series, "cached_at", cached.Timestamp, "sync_gen", s.syncGen)
+		}
+		// Restore sync timestamps so the UI shows correct Last/Next Sync after restart.
+		if !cached.LastSync.IsZero() {
+			s.mu.Lock()
+			s.status.LastSync = cached.LastSync
+			s.status.NextSync = cached.LastSync.Add(s.cfg.Sync.ParsedInterval)
+			s.mu.Unlock()
+		}
+		if len(cached.SyncHistory) > 0 {
+			s.mu.Lock()
+			s.syncHistory = cached.SyncHistory
+			s.mu.Unlock()
+		}
 	}
 
 	if s.cfg.Sync.OnStartup {
@@ -229,6 +245,7 @@ func (s *Scheduler) Status() Status {
 	s.mu.RUnlock()
 	st.TotalMovies = movies
 	st.TotalSeries = series
+	st.GraceCycles = s.cfg.Sync.GraceCycles
 	return st
 }
 
@@ -374,15 +391,14 @@ func (s *Scheduler) Sync(ctx context.Context) error {
 	movies, series := s.idx.Counts()
 	slog.Info("sync complete", "movies", movies, "series", series)
 
-	// Update unenriched count in status.
+	// Update unenriched count and sync generation in status.
 	s.mu.Lock()
 	s.status.UnenrichedCount = unenrichedCount
+	s.status.SyncGen = s.syncGen
 	s.mu.Unlock()
 
-	if err := SaveIndexCache(s.cachePath, merged, s.syncGen); err != nil {
-		slog.Warn("index cache save failed", "error", err)
-	}
-
+	// appendSyncRun before SaveIndexCache so the current run is included in
+	// the persisted cache and survives a restart before the next sync.
 	errStr := ""
 	if syncErr != nil {
 		errStr = syncErr.Error()
@@ -397,6 +413,11 @@ func (s *Scheduler) Sync(ctx context.Context) error {
 		Expired:    expiredCount,
 		Error:      errStr,
 	})
+
+	now := time.Now()
+	if err := SaveIndexCache(s.cachePath, merged, s.syncGen, now, s.SyncHistory()); err != nil {
+		slog.Warn("index cache save failed", "error", err)
+	}
 
 	return nil
 }
@@ -924,17 +945,30 @@ func (s *Scheduler) enrich(ctx context.Context, items []*index.Item, cachedByKey
 					}
 				}
 
-				// TVDB fallback: any series without a TVDB ID is searched
-				// directly on TVDB by title — covers both the case where
-				// TMDB had no TVDB cross-link and the case where TMDB
-				// found nothing at all (e.g. Dutch-only shows).
-				if item.Type == index.TypeSeries && item.TVDBId == "" && s.tvdb != nil {
-					if err := s.resolveByTVDB(ctx, item); err != nil {
-						slog.Warn("TVDB fallback failed", "name", item.Name, "error", err)
-					}
+			// TVDB fallback: any series without a TVDB ID is searched
+			// directly on TVDB by title — covers both the case where
+			// TMDB had no TVDB cross-link and the case where TMDB
+			// found nothing at all (e.g. Dutch-only shows).
+			if item.Type == index.TypeSeries && item.TVDBId == "" && s.tvdb != nil {
+				if err := s.resolveByTVDB(ctx, item); err != nil {
+					slog.Warn("TVDB fallback failed", "name", item.Name, "error", err)
 				}
+			}
 
-				n := atomic.AddInt64(&progressN, 1)
+			// Determine enrichment failure reason from the item's final state,
+			// after all fallback stages have completed. Setting this at
+			// intermediate failure points would be incorrect because a later
+			// fallback stage may recover the item successfully.
+			item.EnrichFailReason = ""
+			if item.IMDBId == "" && item.TVDBId == "" {
+				if item.TMDBId == "" {
+					item.EnrichFailReason = "no TMDB match"
+				} else {
+					item.EnrichFailReason = "TMDB has no IMDB/TVDB cross-reference"
+				}
+			}
+
+			n := atomic.AddInt64(&progressN, 1)
 				s.setProgress("Enriching via TMDB", int(n), total)
 			}
 		}()

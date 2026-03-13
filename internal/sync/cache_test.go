@@ -34,7 +34,7 @@ func TestIndexCacheRoundTrip(t *testing.T) {
 		},
 	}
 
-	if err := SaveIndexCache(path, items, 7); err != nil {
+	if err := SaveIndexCache(path, items, 7, time.Time{}, nil); err != nil {
 		t.Fatalf("SaveIndexCache: %v", err)
 	}
 
@@ -113,7 +113,7 @@ func TestSaveIndexCacheAtomicWrite(t *testing.T) {
 		{Type: index.TypeMovie, XtreamID: 99, Name: "Test Movie"},
 	}
 
-	if err := SaveIndexCache(path, items, 0); err != nil {
+	if err := SaveIndexCache(path, items, 0, time.Time{}, nil); err != nil {
 		t.Fatalf("SaveIndexCache: %v", err)
 	}
 
@@ -137,12 +137,40 @@ func TestCachePathHelper(t *testing.T) {
 	}
 }
 
+func TestCacheLastSyncAndHistoryRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".vodarr-cache.json")
+
+	lastSync := time.Now().Truncate(time.Second)
+	history := []SyncRun{
+		{StartedAt: lastSync, DurationMs: 5000, Found: 100, Enriched: 90},
+	}
+
+	if err := SaveIndexCache(path, nil, 3, lastSync, history); err != nil {
+		t.Fatalf("SaveIndexCache: %v", err)
+	}
+
+	loaded, err := LoadIndexCache(path)
+	if err != nil {
+		t.Fatalf("LoadIndexCache: %v", err)
+	}
+	if !loaded.LastSync.Equal(lastSync) {
+		t.Errorf("LastSync = %v, want %v", loaded.LastSync, lastSync)
+	}
+	if len(loaded.SyncHistory) != 1 {
+		t.Fatalf("SyncHistory len = %d, want 1", len(loaded.SyncHistory))
+	}
+	if loaded.SyncHistory[0].Found != 100 {
+		t.Errorf("SyncHistory[0].Found = %d, want 100", loaded.SyncHistory[0].Found)
+	}
+}
+
 func TestSaveIndexCacheTimestamp(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".vodarr-cache.json")
 
 	before := time.Now()
-	if err := SaveIndexCache(path, nil, 0); err != nil {
+	if err := SaveIndexCache(path, nil, 0, time.Time{}, nil); err != nil {
 		t.Fatalf("SaveIndexCache: %v", err)
 	}
 	after := time.Now()

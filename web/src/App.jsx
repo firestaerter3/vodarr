@@ -40,6 +40,7 @@ function GearIcon() {
 
 export default function App() {
   const [page, setPage] = useState('dashboard')
+  const [contentFilter, setContentFilter] = useState('all')
   const [version, setVersion] = useState('')
 
   useEffect(() => {
@@ -48,6 +49,12 @@ export default function App() {
       .then(d => { if (d.version) setVersion(d.version) })
       .catch(() => {})
   }, [])
+
+  // Navigate to a page, optionally pre-setting a content filter.
+  const navigate = (p, filter) => {
+    if (filter !== undefined) setContentFilter(filter)
+    setPage(p)
+  }
 
   return (
     <div className="flex h-full min-h-screen">
@@ -75,7 +82,7 @@ export default function App() {
           {NAV.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
-              onClick={() => setPage(id)}
+              onClick={() => navigate(id)}
               className={[
                 'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm font-display font-500 transition-all duration-150',
                 page === id
@@ -97,8 +104,8 @@ export default function App() {
 
       {/* Main content */}
       <main className="flex-1 overflow-auto">
-        {page === 'dashboard' && <Dashboard />}
-        {page === 'content' && <Content />}
+        {page === 'dashboard' && <Dashboard navigate={navigate} />}
+        {page === 'content' && <Content initialFilter={contentFilter} onFilterChange={setContentFilter} />}
         {page === 'settings' && <Settings />}
       </main>
     </div>

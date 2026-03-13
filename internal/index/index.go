@@ -55,6 +55,10 @@ type Item struct {
 	LastSeenSync int `json:"last_seen_sync,omitempty"` // sync generation when last seen in provider catalog
 	MissingSince int `json:"missing_since,omitempty"`  // sync generation when first noticed missing (0 = present)
 
+	// EnrichFailReason is set when enrichment could not produce IMDB/TVDB IDs.
+	// It is determined from the item's final state after all fallback stages complete.
+	EnrichFailReason string `json:"enrich_fail_reason,omitempty"`
+
 	// Normalised title used for fuzzy matching (set by index on insert)
 	normalizedTitle string
 }
