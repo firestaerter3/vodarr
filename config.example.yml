@@ -13,7 +13,8 @@ output:
   series_dir: "tv"         # Subfolder for TV series
   mode: "strm"             # "strm" (default): write .strm pointer files; "download": download actual media files
   # max_concurrent_downloads: 1  # download mode only; max simultaneous downloads (1-5, default 1)
-                                 # Keep low to avoid being blocked by your provider (most allow 1-3 connections)
+  # download_delay: "30s"        # pause between consecutive downloads to look like normal viewing
+  # bandwidth_limit: ""          # max download speed e.g. "20M" (MB/s), "500K" (KB/s); empty = unlimited
 
 sync:
   interval: "6h"           # How often to refresh Xtream catalog

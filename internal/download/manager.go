@@ -16,12 +16,14 @@ import (
 // Manager handles HTTP downloads of media files with concurrency limiting,
 // retry/backoff, stall detection, and HTTP Range resume support.
 type Manager struct {
-	sem          chan struct{}
-	client       *http.Client
-	maxRetries   int
-	retryDelay   time.Duration
-	stallTimeout time.Duration
-	pauseDur     time.Duration // how long to auto-pause on provider errors
+	sem            chan struct{}
+	client         *http.Client
+	maxRetries     int
+	retryDelay     time.Duration
+	stallTimeout   time.Duration
+	pauseDur       time.Duration // how long to auto-pause on provider errors
+	interDelay     time.Duration // delay between consecutive downloads
+	bandwidthLimit int64         // bytes/sec; 0 = unlimited
 
 	// Provider-error auto-pause: if the provider returns 403/429, we pause
 	// all new downloads for this duration to avoid cascading failures.
@@ -29,19 +31,35 @@ type Manager struct {
 	pauseUntil time.Time
 }
 
-func NewManager(maxConcurrent int) *Manager {
-	if maxConcurrent < 1 {
-		maxConcurrent = 1
+// Options configures the download manager.
+type Options struct {
+	MaxConcurrent  int
+	InterDelay     time.Duration // pause between consecutive downloads (default 30s)
+	BandwidthLimit int64         // bytes/sec; 0 = unlimited
+}
+
+func NewManager(opts Options) *Manager {
+	if opts.MaxConcurrent < 1 {
+		opts.MaxConcurrent = 1
+	}
+	if opts.InterDelay == 0 {
+		opts.InterDelay = 30 * time.Second
 	}
 	return &Manager{
-		sem: make(chan struct{}, maxConcurrent),
+		sem: make(chan struct{}, opts.MaxConcurrent),
 		client: &http.Client{
 			Timeout: 0, // no overall timeout; we use stall detection instead
+			Transport: &http.Transport{
+				// Disable compression so bandwidth limiting is accurate on the wire
+				DisableCompression: true,
+			},
 		},
-		maxRetries:   3,
-		retryDelay:   5 * time.Second,
-		stallTimeout: 30 * time.Second,
-		pauseDur:     60 * time.Second,
+		maxRetries:     3,
+		retryDelay:     5 * time.Second,
+		stallTimeout:   30 * time.Second,
+		pauseDur:       60 * time.Second,
+		interDelay:     opts.InterDelay,
+		bandwidthLimit: opts.BandwidthLimit,
 	}
 }
 
@@ -56,7 +74,19 @@ func (m *Manager) Download(ctx context.Context, url, destPath string, onProgress
 	// Acquire semaphore slot (or bail on ctx cancel)
 	select {
 	case m.sem <- struct{}{}:
-		defer func() { <-m.sem }()
+		defer func() {
+			// Inter-download delay: pause before releasing the slot so the next
+			// download doesn't start immediately. Makes traffic look like a human
+			// watching content rather than an automated pipeline.
+			if m.interDelay > 0 {
+				slog.Debug("download manager: inter-download cooldown", "delay", m.interDelay)
+				select {
+				case <-time.After(m.interDelay):
+				case <-ctx.Done():
+				}
+			}
+			<-m.sem
+		}()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -118,6 +148,7 @@ func (m *Manager) doAttempt(ctx context.Context, url, partPath string, onProgres
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
+	req.Header.Set("User-Agent", "VLC/3.0.21 LibVLC/3.0.21")
 	if offset > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
@@ -169,11 +200,17 @@ func (m *Manager) doAttempt(ctx context.Context, url, partPath string, onProgres
 	defer f.Close()
 
 	downloaded := offset
-	stallReader := newStallReader(ctx, resp.Body, m.stallTimeout)
+
+	// Layer readers: bandwidth throttle (if configured) → stall detection
+	var bodyReader io.Reader = resp.Body
+	if m.bandwidthLimit > 0 {
+		bodyReader = newThrottledReader(bodyReader, m.bandwidthLimit)
+	}
+	sr := newStallReader(ctx, bodyReader, m.stallTimeout)
 
 	buf := make([]byte, 256*1024) // 256 KB chunks
 	for {
-		n, readErr := stallReader.Read(buf)
+		n, readErr := sr.Read(buf)
 		if n > 0 {
 			if _, wErr := f.Write(buf[:n]); wErr != nil {
 				return fmt.Errorf("write to part file: %w", wErr)
@@ -230,6 +267,52 @@ type HTTPError struct {
 
 func (e *HTTPError) Error() string {
 	return fmt.Sprintf("http status %d", e.StatusCode)
+}
+
+// throttledReader limits read throughput to a target bytes/sec rate using a
+// token-bucket approach. This makes download traffic look like normal streaming
+// playback rather than a max-speed bulk transfer.
+type throttledReader struct {
+	r         io.Reader
+	limit     int64 // bytes per second
+	lastRead  time.Time
+	allowance float64
+}
+
+func newThrottledReader(r io.Reader, bytesPerSec int64) *throttledReader {
+	return &throttledReader{
+		r:         r,
+		limit:     bytesPerSec,
+		lastRead:  time.Now(),
+		allowance: float64(bytesPerSec),
+	}
+}
+
+func (t *throttledReader) Read(p []byte) (int, error) {
+	now := time.Now()
+	elapsed := now.Sub(t.lastRead).Seconds()
+	t.lastRead = now
+	t.allowance += elapsed * float64(t.limit)
+	if t.allowance > float64(t.limit) {
+		t.allowance = float64(t.limit)
+	}
+
+	if t.allowance < 1 {
+		sleepFor := time.Duration((1 - t.allowance) / float64(t.limit) * float64(time.Second))
+		time.Sleep(sleepFor)
+		t.allowance = 1
+		t.lastRead = time.Now()
+	}
+
+	// Cap read size to available allowance
+	maxRead := int(t.allowance)
+	if maxRead > len(p) {
+		maxRead = len(p)
+	}
+
+	n, err := t.r.Read(p[:maxRead])
+	t.allowance -= float64(n)
+	return n, err
 }
 
 // stallReader wraps an io.Reader and returns an error if no data arrives

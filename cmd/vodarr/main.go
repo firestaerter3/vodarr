@@ -81,8 +81,16 @@ func main() {
 	// Download manager: only created when output.mode == "download"
 	var dlManager *download.Manager
 	if cfg.Output.Mode == "download" {
-		dlManager = download.NewManager(cfg.Output.MaxConcurrentDownloads)
-		slog.Info("download mode enabled", "max_concurrent", cfg.Output.MaxConcurrentDownloads)
+		dlManager = download.NewManager(download.Options{
+			MaxConcurrent:  cfg.Output.MaxConcurrentDownloads,
+			InterDelay:     cfg.Output.ParsedDownloadDelay,
+			BandwidthLimit: cfg.Output.ParsedBandwidthLimit,
+		})
+		slog.Info("download mode enabled",
+			"max_concurrent", cfg.Output.MaxConcurrentDownloads,
+			"inter_delay", cfg.Output.ParsedDownloadDelay,
+			"bandwidth_limit", cfg.Output.BandwidthLimit,
+		)
 	}
 
 	// 2D: Pass qBit credentials from config; newznabSrvURL used to restrict SSRF to own Newznab host

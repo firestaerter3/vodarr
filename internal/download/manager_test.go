@@ -12,6 +12,13 @@ import (
 	"time"
 )
 
+// testManager creates a Manager with no inter-download delay for fast tests.
+func testManager(maxConcurrent int) *Manager {
+	m := NewManager(Options{MaxConcurrent: maxConcurrent})
+	m.interDelay = 0
+	return m
+}
+
 func TestDownloadBasic(t *testing.T) {
 	content := "hello world, this is a test video file"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -20,7 +27,7 @@ func TestDownloadBasic(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewManager(1)
+	m := testManager(1)
 	dest := filepath.Join(t.TempDir(), "movie.mkv")
 
 	var lastDownloaded, lastTotal int64
@@ -47,7 +54,6 @@ func TestDownloadBasic(t *testing.T) {
 		t.Errorf("final total = %d, want %d", lastTotal, len(content))
 	}
 
-	// .part file should be cleaned up
 	if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
 		t.Error("expected .part file to be removed after successful download")
 	}
@@ -74,7 +80,7 @@ func TestDownloadConcurrencyLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewManager(2) // limit to 2 concurrent
+	m := testManager(2)
 
 	done := make(chan error, 5)
 	for i := 0; i < 5; i++ {
@@ -103,12 +109,11 @@ func TestDownloadContextCancel(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.(http.Flusher).Flush()
 		close(started)
-		// Block until request context is done (simulates slow provider)
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
 
-	m := NewManager(1)
+	m := testManager(1)
 	m.stallTimeout = 5 * time.Second
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -143,8 +148,8 @@ func TestDownloadRetryOnServerError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewManager(1)
-	m.retryDelay = 10 * time.Millisecond // fast retries for test
+	m := testManager(1)
+	m.retryDelay = 10 * time.Millisecond
 
 	dest := filepath.Join(t.TempDir(), "movie.mkv")
 	err := m.Download(context.Background(), srv.URL, dest, nil)
@@ -186,12 +191,11 @@ func TestDownloadHTTPResume(t *testing.T) {
 	dest := filepath.Join(dir, "movie.mkv")
 	partPath := dest + ".part"
 
-	// Pre-seed a partial .part file
 	if err := os.WriteFile(partPath, []byte("abcde"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	m := NewManager(1)
+	m := testManager(1)
 	err := m.Download(context.Background(), srv.URL, dest, nil)
 	if err != nil {
 		t.Fatalf("download failed: %v", err)
@@ -212,10 +216,10 @@ func TestDownloadAutoPauseOn403(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewManager(1)
+	m := testManager(1)
 	m.retryDelay = 10 * time.Millisecond
 	m.maxRetries = 1
-	m.pauseDur = 200 * time.Millisecond // short pause for test
+	m.pauseDur = 200 * time.Millisecond
 
 	dest := filepath.Join(t.TempDir(), "movie.mkv")
 	err := m.Download(context.Background(), srv.URL, dest, nil)
@@ -223,7 +227,6 @@ func TestDownloadAutoPauseOn403(t *testing.T) {
 		t.Fatal("expected error on 403, got nil")
 	}
 
-	// Verify auto-pause was triggered
 	m.pauseMu.RLock()
 	paused := m.pauseUntil.After(time.Now())
 	m.pauseMu.RUnlock()
@@ -233,7 +236,6 @@ func TestDownloadAutoPauseOn403(t *testing.T) {
 }
 
 func TestDownloadAtomicWrite(t *testing.T) {
-	// Verify that partial downloads don't leave a final file
 	var attempts int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(&attempts, 1)
@@ -241,7 +243,7 @@ func TestDownloadAtomicWrite(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewManager(1)
+	m := testManager(1)
 	m.retryDelay = 5 * time.Millisecond
 	m.maxRetries = 1
 
@@ -250,5 +252,61 @@ func TestDownloadAtomicWrite(t *testing.T) {
 
 	if _, err := os.Stat(dest); !os.IsNotExist(err) {
 		t.Error("expected final file not to exist after failed download")
+	}
+}
+
+func TestDownloadUserAgent(t *testing.T) {
+	var receivedUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedUA = r.Header.Get("User-Agent")
+		w.Write([]byte("data"))
+	}))
+	defer srv.Close()
+
+	m := testManager(1)
+	dest := filepath.Join(t.TempDir(), "movie.mkv")
+	if err := m.Download(context.Background(), srv.URL, dest, nil); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+
+	if receivedUA != "VLC/3.0.21 LibVLC/3.0.21" {
+		t.Errorf("User-Agent = %q, want VLC/3.0.21 LibVLC/3.0.21", receivedUA)
+	}
+}
+
+func TestDownloadBandwidthThrottle(t *testing.T) {
+	content := make([]byte, 100*1024) // 100 KB
+	for i := range content {
+		content[i] = byte(i % 256)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(content)))
+		w.Write(content)
+	}))
+	defer srv.Close()
+
+	m := NewManager(Options{
+		MaxConcurrent:  1,
+		InterDelay:     0,
+		BandwidthLimit: 50 * 1024, // 50 KB/s → should take ~2s for 100 KB
+	})
+
+	dest := filepath.Join(t.TempDir(), "movie.mkv")
+	start := time.Now()
+	if err := m.Download(context.Background(), srv.URL, dest, nil); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	if elapsed < 1*time.Second {
+		t.Errorf("download completed too fast (%s) — bandwidth limit not applied", elapsed)
+	}
+
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != len(content) {
+		t.Errorf("file size = %d, want %d", len(data), len(content))
 	}
 }
