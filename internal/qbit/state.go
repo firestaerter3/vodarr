@@ -12,6 +12,7 @@ const (
 	StateDownloading TorrentState = "downloading"
 	StatePausedUP    TorrentState = "pausedUP"
 	StateUploading   TorrentState = "uploading"
+	StateError       TorrentState = "error"
 )
 
 // Torrent represents a tracked "download" in the fake qBit client.
@@ -101,4 +102,30 @@ func (s *Store) SetComplete(hash string, strmPaths, mkvPaths []string) {
 	t.CompletionOn = time.Now().Unix()
 	t.StrmPaths = strmPaths
 	t.MkvPaths = mkvPaths
+}
+
+// UpdateProgress updates the download progress for a torrent in-flight.
+// Called by the download manager as bytes arrive.
+func (s *Store) UpdateProgress(hash string, downloaded, total int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.torrents[hash]
+	if !ok {
+		return
+	}
+	t.Size = total
+	if total > 0 {
+		t.Progress = float64(downloaded) / float64(total)
+	}
+}
+
+// SetFailed marks a torrent as errored so Sonarr/Radarr can see the failure.
+func (s *Store) SetFailed(hash string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.torrents[hash]
+	if !ok {
+		return
+	}
+	t.State = StateError
 }

@@ -43,9 +43,11 @@ type TMDBConfig struct {
 }
 
 type OutputConfig struct {
-	Path       string `yaml:"path"`
-	MoviesDir  string `yaml:"movies_dir"`
-	SeriesDir  string `yaml:"series_dir"`
+	Path                   string `yaml:"path"`
+	MoviesDir              string `yaml:"movies_dir"`
+	SeriesDir              string `yaml:"series_dir"`
+	Mode                   string `yaml:"mode"`                     // "strm" (default) or "download"
+	MaxConcurrentDownloads int    `yaml:"max_concurrent_downloads"` // download mode only; default 1
 }
 
 type SyncConfig struct {
@@ -150,8 +152,10 @@ func Load(path string) (*Config, error) {
 func defaults() *Config {
 	return &Config{
 		Output: OutputConfig{
-			MoviesDir: "movies",
-			SeriesDir: "tv",
+			MoviesDir:              "movies",
+			SeriesDir:              "tv",
+			Mode:                   "strm",
+			MaxConcurrentDownloads: 1,
 		},
 		Sync: SyncConfig{
 			Interval:    "6h",
@@ -211,6 +215,23 @@ func (c *Config) validate() error {
 	}
 	if c.Sync.Parallelism > 20 {
 		c.Sync.Parallelism = 20
+	}
+
+	switch c.Output.Mode {
+	case "", "strm", "download":
+	default:
+		return fmt.Errorf("output.mode must be \"strm\" or \"download\", got %q", c.Output.Mode)
+	}
+	if c.Output.Mode == "" {
+		c.Output.Mode = "strm"
+	}
+	if c.Output.Mode == "download" {
+		if c.Output.MaxConcurrentDownloads < 1 {
+			c.Output.MaxConcurrentDownloads = 1
+		}
+		if c.Output.MaxConcurrentDownloads > 5 {
+			c.Output.MaxConcurrentDownloads = 5
+		}
 	}
 
 	return nil

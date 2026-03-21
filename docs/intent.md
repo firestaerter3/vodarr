@@ -49,7 +49,6 @@ import, which are deleted via webhook after import completes).
 - **Transcoding or re-encoding** — streams are passed through as-is.
 - **DRM bypass** — VODarr only works with providers that serve plain
   HTTP streams.
-- **Download scheduling / queuing** — that is Sonarr/Radarr's job.
 - **Subtitle or metadata scraping** — Jellyfin handles this via its
   own TMDB/TVDB scrapers once the `.strm` is imported.
 
@@ -129,6 +128,23 @@ by writing a `.mkv` companion file alongside each `.strm`:
 
 After import, the `.mkv` stub is deleted via the webhook (see below).
 Only the `.strm` remains on disk.
+
+**Download mode (optional)**
+When `output.mode` is set to `"download"`, VODarr downloads the actual
+media file from the Xtream provider via HTTP GET instead of writing a
+`.strm` pointer. No `.strm` or `.mkv` stub is created — the real file
+satisfies all Sonarr/Radarr ffprobe and size checks natively. The fake
+qBit API reports real download progress (0.0 → 1.0) as bytes arrive.
+
+The download manager includes provider safeguards:
+- Semaphore-limited concurrency (`max_concurrent_downloads`, default 1)
+  to avoid exhausting provider connection slots
+- Retry with exponential backoff (5s, 10s, 20s) on transient errors
+- Stall detection (30s no-data timeout) with automatic retry
+- HTTP Range resume to avoid re-downloading on retry
+- Auto-pause (60s) when the provider returns 403 or 429
+- Atomic `.part` file writes — corrupt files never appear in the library
+- Context cancellation wired to the qBit delete API
 
 **Language token injection**
 Release names include a language token (e.g. `DUTCH`) derived from
@@ -331,6 +347,8 @@ output:
   path: "/data/strm"                  # Root for all .strm files
   movies_dir: "movies"                # → /data/strm/movies/
   series_dir: "tv"                    # → /data/strm/tv/
+  mode: "strm"                        # "strm" (default) or "download"
+  # max_concurrent_downloads: 1       # download mode only; 1-5, default 1
 
 sync:
   interval: "6h"                      # Go duration: 1h, 6h, 24h, etc.
@@ -434,6 +452,7 @@ docker compose up --build
 | *arr webhook listener | Done (v0.3.0) | Deletes .mkv stubs post-import |
 | Arr auto-configure | Done (v0.3.0) | One-click indexer + client + webhook setup from web UI |
 | Restart-free index | Done (v0.2.x) | Disk cache eliminates cold-start re-sync |
+| Download mode | Done | `output.mode: "download"` downloads real files with provider safeguards |
 | Multiple providers | Planned | Support >1 Xtream account |
 | Quality selection | Planned | Prefer HD streams over SD duplicates |
 | SQLite persistence | Planned | Full schema persistence (cache covers most use cases) |

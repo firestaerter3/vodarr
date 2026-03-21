@@ -123,6 +123,35 @@ func (w *Writer) write(dir, filename, content string, info *probe.MediaInfo) (Wr
 	return WriteResult{StrmPath: strmPath, MkvPath: mkvPath}, nil
 }
 
+// MovieFilePath returns the full filesystem path for a downloaded movie file
+// without creating any files or directories. Used by the download manager.
+func (w *Writer) MovieFilePath(name, year, ext string) string {
+	folderName := folderSafe(name)
+	if year != "" {
+		folderName = fmt.Sprintf("%s (%s)", folderName, year)
+	}
+	filename := fileSafe(name)
+	if year != "" {
+		filename = fmt.Sprintf("%s.%s.WEB-DL.%s", filename, year, ext)
+	} else {
+		filename = fmt.Sprintf("%s.WEB-DL.%s", filename, ext)
+	}
+	return filepath.Join(w.outputPath, w.moviesDir, folderName, filename)
+}
+
+// EpisodeFilePath returns the full filesystem path for a downloaded episode file
+// without creating any files or directories. Used by the download manager.
+func (w *Writer) EpisodeFilePath(seriesName string, season, episode int, title, ext string) string {
+	seasonDir := fmt.Sprintf("Season %02d", season)
+	epTag := fmt.Sprintf("S%02dE%02d", season, episode)
+	filename := fileSafe(seriesName) + "." + epTag
+	if title != "" {
+		filename += "." + fileSafe(title)
+	}
+	filename += ".WEB-DL." + ext
+	return filepath.Join(w.outputPath, w.seriesDir, folderSafe(seriesName), seasonDir, filename)
+}
+
 // RemoveMovie deletes the directory for a movie (including all .strm/.mkv files).
 // The directory is determined by the same naming rules as WriteMovie.
 // Returns nil if the directory does not exist.

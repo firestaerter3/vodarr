@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/vodarr/vodarr/internal/bencode"
+	"github.com/vodarr/vodarr/internal/download"
 	"github.com/vodarr/vodarr/internal/probe"
 	"github.com/vodarr/vodarr/internal/strm"
 	"github.com/vodarr/vodarr/internal/xtream"
@@ -70,6 +71,8 @@ type Handler struct {
 	username      string // 2D: optional credentials; empty = no auth
 	password      string
 	newznabHost   string // expected host:port of the Newznab server; validated in processURL
+	outputMode    string              // "strm" or "download"
+	downloader    *download.Manager   // non-nil when outputMode == "download"
 	mu            sync.RWMutex
 	sessions      map[string]time.Time // sid → last-used time
 	categories    map[string]string    // name → savePath; populated by createCategory
@@ -77,10 +80,13 @@ type Handler struct {
 	mux           *http.ServeMux
 }
 
-func NewHandler(store *Store, writer *strm.Writer, xc *xtream.Client, pr Prober, savePath, username, password, newznabURL string) *Handler {
+func NewHandler(store *Store, writer *strm.Writer, xc *xtream.Client, pr Prober, savePath, username, password, newznabURL, outputMode string, dlManager *download.Manager) *Handler {
 	newznabHost := ""
 	if u, err := url.Parse(newznabURL); err == nil {
 		newznabHost = u.Host
+	}
+	if outputMode == "" {
+		outputMode = "strm"
 	}
 	h := &Handler{
 		store:       store,
@@ -91,6 +97,8 @@ func NewHandler(store *Store, writer *strm.Writer, xc *xtream.Client, pr Prober,
 		username:    username,
 		password:    password,
 		newznabHost: newznabHost,
+		outputMode:  outputMode,
+		downloader:  dlManager,
 		sessions:    make(map[string]time.Time),
 		categories:  make(map[string]string),
 		// 2A+3D: dedicated HTTP client for descriptor fetches
@@ -401,7 +409,8 @@ func (h *Handler) processURL(rawURL, savePath, category string) error {
 	return h.processDescriptor(desc, hash, savePath, category)
 }
 
-// processDescriptor creates a Torrent entry and asynchronously writes .strm files.
+// processDescriptor creates a Torrent entry and asynchronously writes .strm files
+// (strm mode) or downloads the actual media file (download mode).
 func (h *Handler) processDescriptor(desc itemDescriptor, hash string, savePath, category string) error {
 	t := &Torrent{
 		Hash:         hash,
@@ -422,86 +431,144 @@ func (h *Handler) processDescriptor(desc itemDescriptor, hash string, savePath, 
 	}
 	h.store.Add(t)
 
-	go func() {
-		if h.xtream == nil || h.writer == nil {
-			slog.Warn("strm write skipped: xtream/writer not configured", "name", desc.Name)
-			h.store.SetComplete(hash, nil, nil)
+	if h.outputMode == "download" {
+		go h.processDownload(desc, hash)
+	} else {
+		go h.processStrm(desc, hash)
+	}
+	return nil
+}
+
+// processStrm writes .strm pointer files and .mkv stubs (original behavior).
+func (h *Handler) processStrm(desc itemDescriptor, hash string) {
+	if h.xtream == nil || h.writer == nil {
+		slog.Warn("strm write skipped: xtream/writer not configured", "name", desc.Name)
+		h.store.SetComplete(hash, nil, nil)
+		return
+	}
+
+	ctx := context.Background()
+
+	var strmPaths, mkvPaths []string
+	var writeErr error
+
+	ext := desc.ContainerExt
+	if ext == "" {
+		ext = "mkv"
+	}
+
+	switch desc.Type {
+	case "movie":
+		streamURL := h.xtream.StreamURL(desc.XtreamID, ext)
+		var info *probe.MediaInfo
+		if h.prober != nil {
+			var probeErr error
+			info, probeErr = h.prober.Probe(ctx, streamURL)
+			if probeErr != nil {
+				slog.Warn("probe failed, mkv stub will lack metadata", "name", desc.Name, "error", probeErr)
+			}
+		}
+		result, err := h.writer.WriteMovie(desc.Name, desc.Year, streamURL, info)
+		if err != nil {
+			writeErr = err
+		} else {
+			strmPaths = append(strmPaths, result.StrmPath)
+			mkvPaths = append(mkvPaths, result.MkvPath)
+		}
+
+	case "series":
+		var seriesInfo *probe.MediaInfo
+		for i, ep := range desc.Episodes {
+			epExt := ep.Ext
+			if epExt == "" {
+				epExt = "mkv"
+			}
+			streamURL := h.xtream.SeriesStreamURL(ep.EpisodeID, epExt)
+			if i == 0 && h.prober != nil {
+				var probeErr error
+				seriesInfo, probeErr = h.prober.Probe(ctx, streamURL)
+				if probeErr != nil {
+					slog.Warn("probe failed for series", "name", desc.Name, "error", probeErr)
+				}
+			}
+			var epInfo *probe.MediaInfo
+			if seriesInfo != nil {
+				cp := *seriesInfo
+				epInfo = &cp
+			}
+			result, err := h.writer.WriteEpisode(desc.Name, ep.Season, ep.EpisodeNum, ep.Title, streamURL, epInfo)
+			if err != nil {
+				slog.Warn("strm write episode failed", "error", err)
+				continue
+			}
+			strmPaths = append(strmPaths, result.StrmPath)
+			mkvPaths = append(mkvPaths, result.MkvPath)
+		}
+	}
+
+	if writeErr != nil {
+		slog.Error("strm write failed", "name", desc.Name, "error", writeErr)
+	}
+
+	h.store.SetComplete(hash, strmPaths, mkvPaths)
+	slog.Info("strm created", "name", desc.Name, "type", desc.Type, "files", len(strmPaths))
+}
+
+// processDownload downloads the actual media file from the Xtream provider.
+func (h *Handler) processDownload(desc itemDescriptor, hash string) {
+	if h.xtream == nil || h.writer == nil || h.downloader == nil {
+		slog.Warn("download skipped: xtream/writer/downloader not configured", "name", desc.Name)
+		h.store.SetFailed(hash)
+		return
+	}
+
+	ctx := context.Background()
+
+	ext := desc.ContainerExt
+	if ext == "" {
+		ext = "mkv"
+	}
+
+	progress := func(downloaded, total int64) {
+		h.store.UpdateProgress(hash, downloaded, total)
+	}
+
+	var filePaths []string
+
+	switch desc.Type {
+	case "movie":
+		streamURL := h.xtream.StreamURL(desc.XtreamID, ext)
+		destPath := h.writer.MovieFilePath(desc.Name, desc.Year, ext)
+
+		slog.Info("download starting", "name", desc.Name, "type", "movie", "dest", destPath)
+		if err := h.downloader.Download(ctx, streamURL, destPath, progress); err != nil {
+			slog.Error("download failed", "name", desc.Name, "error", err)
+			h.store.SetFailed(hash)
 			return
 		}
+		filePaths = append(filePaths, destPath)
 
-		ctx := context.Background()
-
-		var strmPaths, mkvPaths []string
-		var writeErr error
-
-		ext := desc.ContainerExt
-		if ext == "" {
-			ext = "mkv"
-		}
-
-		switch desc.Type {
-		case "movie":
-			streamURL := h.xtream.StreamURL(desc.XtreamID, ext)
-			var info *probe.MediaInfo
-			if h.prober != nil {
-				var probeErr error
-				info, probeErr = h.prober.Probe(ctx, streamURL)
-				if probeErr != nil {
-					slog.Warn("probe failed, mkv stub will lack metadata", "name", desc.Name, "error", probeErr)
-				}
+	case "series":
+		for _, ep := range desc.Episodes {
+			epExt := ep.Ext
+			if epExt == "" {
+				epExt = "mkv"
 			}
-			result, err := h.writer.WriteMovie(desc.Name, desc.Year, streamURL, info)
-			if err != nil {
-				writeErr = err
-			} else {
-				strmPaths = append(strmPaths, result.StrmPath)
-				mkvPaths = append(mkvPaths, result.MkvPath)
+			streamURL := h.xtream.SeriesStreamURL(ep.EpisodeID, epExt)
+			destPath := h.writer.EpisodeFilePath(desc.Name, ep.Season, ep.EpisodeNum, ep.Title, epExt)
+
+			slog.Info("download starting", "name", desc.Name, "episode", fmt.Sprintf("S%02dE%02d", ep.Season, ep.EpisodeNum), "dest", destPath)
+			if err := h.downloader.Download(ctx, streamURL, destPath, progress); err != nil {
+				slog.Error("download failed", "name", desc.Name, "episode", fmt.Sprintf("S%02dE%02d", ep.Season, ep.EpisodeNum), "error", err)
+				h.store.SetFailed(hash)
+				return
 			}
-
-		case "series":
-			// Probe only the first episode; all episodes of the same series
-			// typically share codec/resolution so we reuse the result.
-			var seriesInfo *probe.MediaInfo
-			for i, ep := range desc.Episodes {
-				epExt := ep.Ext
-				if epExt == "" {
-					epExt = "mkv"
-				}
-				streamURL := h.xtream.SeriesStreamURL(ep.EpisodeID, epExt)
-				if i == 0 && h.prober != nil {
-					var probeErr error
-					seriesInfo, probeErr = h.prober.Probe(ctx, streamURL)
-					if probeErr != nil {
-						slog.Warn("probe failed for series", "name", desc.Name, "error", probeErr)
-					}
-				}
-				// Per-episode info: reuse series codec/resolution from the probe.
-				// Duration is kept from the first episode — a reasonable approximation
-				// that satisfies Sonarr's sample-detection threshold (requires > ~20 min).
-				var epInfo *probe.MediaInfo
-				if seriesInfo != nil {
-					cp := *seriesInfo
-					epInfo = &cp
-				}
-				result, err := h.writer.WriteEpisode(desc.Name, ep.Season, ep.EpisodeNum, ep.Title, streamURL, epInfo)
-				if err != nil {
-					slog.Warn("strm write episode failed", "error", err)
-					continue
-				}
-				strmPaths = append(strmPaths, result.StrmPath)
-				mkvPaths = append(mkvPaths, result.MkvPath)
-			}
+			filePaths = append(filePaths, destPath)
 		}
+	}
 
-		if writeErr != nil {
-			slog.Error("strm write failed", "name", desc.Name, "error", writeErr)
-		}
-
-		h.store.SetComplete(hash, strmPaths, mkvPaths)
-		slog.Info("strm created", "name", desc.Name, "type", desc.Type, "files", len(strmPaths))
-	}()
-
-	return nil
+	h.store.SetComplete(hash, nil, filePaths)
+	slog.Info("download complete", "name", desc.Name, "type", desc.Type, "files", len(filePaths))
 }
 
 // validateDescriptorURL rejects non-http/https schemes, URLs that are not
