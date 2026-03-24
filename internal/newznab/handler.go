@@ -291,8 +291,8 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build JSON descriptor with a clean name (IPTV prefix stripped).
-	cleanName := stripIPTVPrefix(found.Name)
+	// Build JSON descriptor with a clean name (IPTV prefix and embedded year stripped).
+	cleanName := sanitizeNameForTitle(found.Name)
 	desc := map[string]interface{}{
 		"xtream_id":     found.XtreamID,
 		"type":          string(found.Type),

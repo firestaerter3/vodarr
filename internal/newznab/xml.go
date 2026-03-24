@@ -113,6 +113,9 @@ var yearDashRe = regexp.MustCompile(`\s*-\s*\d{4}\s*$`)
 // yearBracketRe matches a trailing bracket-enclosed year, e.g. "Movie [2021]".
 var yearBracketRe = regexp.MustCompile(`\s*\[\d{4}\]\s*$`)
 
+// yearParenRe matches a trailing parenthesised year, e.g. "Movie (2021)".
+var yearParenRe = regexp.MustCompile(`\s*\(\d{4}\)\s*$`)
+
 // hevcRe matches HEVC codec markers for quality attribute generation.
 var hevcRe = regexp.MustCompile(`(?i)\bHEVC\b`)
 
@@ -134,6 +137,7 @@ func sanitizeNameForTitle(name string) string {
 	s := strings.TrimSpace(iptvPrefixRe.ReplaceAllString(name, ""))
 	s = yearDashRe.ReplaceAllString(s, "")
 	s = yearBracketRe.ReplaceAllString(s, "")
+	s = yearParenRe.ReplaceAllString(s, "")
 	s = nlGespokenRe.ReplaceAllString(s, "DUTCH")
 	// Normalise any double spaces left after stripping.
 	return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
