@@ -23,6 +23,7 @@ import (
 
 	"github.com/vodarr/vodarr/internal/config"
 	"github.com/vodarr/vodarr/internal/index"
+	"github.com/vodarr/vodarr/internal/logbuf"
 	vodarrsync "github.com/vodarr/vodarr/internal/sync"
 	"github.com/vodarr/vodarr/internal/strm"
 	"github.com/vodarr/vodarr/internal/tmdb"
@@ -32,11 +33,16 @@ import (
 
 const passwordSentinel = "********"
 
+// logLines is satisfied by *logbuf.Buffer; kept as a local interface so this
+// package does not hard-depend on the logbuf concrete type in tests.
+type logLines interface{ Lines() []string }
+
 // Handler serves the web UI backend API and the embedded static frontend.
 type Handler struct {
 	idx       *index.Index
 	scheduler *vodarrsync.Scheduler
 	writer    *strm.Writer // nil = strm refresh disabled
+	logBuf    logLines     // nil = log download disabled
 	version   string
 	username  string // 2E: optional basic auth for API endpoints
 	password  string
@@ -48,11 +54,12 @@ type Handler struct {
 	refreshing atomic.Bool // guards against concurrent /api/strm/refresh calls
 }
 
-func NewHandler(idx *index.Index, scheduler *vodarrsync.Scheduler, writer *strm.Writer, staticFS fs.FS, cfg *config.Config, cfgPath string, username, password, version string) *Handler {
+func NewHandler(idx *index.Index, scheduler *vodarrsync.Scheduler, writer *strm.Writer, staticFS fs.FS, logBuf logLines, cfg *config.Config, cfgPath string, username, password, version string) *Handler {
 	h := &Handler{
 		idx:       idx,
 		scheduler: scheduler,
 		writer:    writer,
+		logBuf:    logBuf,
 		version:   version,
 		username:  username,
 		password:  password,
@@ -114,6 +121,7 @@ func (h *Handler) registerRoutes(staticFS fs.FS) {
 	h.mux.HandleFunc("POST /api/arr/setup", auth(h.handleArrSetup))
 	h.mux.HandleFunc("POST /api/strm/refresh", auth(h.handleStrmRefresh))
 	h.mux.HandleFunc("GET /api/sync/history", auth(h.handleSyncHistory))
+	h.mux.HandleFunc("GET /api/logs/download", auth(h.handleLogsDownload))
 
 	// Serve embedded static frontend; fall back to index.html for SPA routing
 	if staticFS != nil {
@@ -1510,4 +1518,17 @@ func (h *Handler) handleSyncHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, map[string]interface{}{"total": total, "runs": history})
+}
+
+func (h *Handler) handleLogsDownload(w http.ResponseWriter, _ *http.Request) {
+	if h.logBuf == nil {
+		http.Error(w, "log buffer not available", http.StatusServiceUnavailable)
+		return
+	}
+	date := time.Now().UTC().Format("2006-01-02")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="vodarr-`+date+`.log"`)
+	for _, line := range h.logBuf.Lines() {
+		fmt.Fprintln(w, logbuf.Sanitize(line))
+	}
 }

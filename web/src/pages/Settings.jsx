@@ -120,6 +120,8 @@ export default function Settings() {
   const [restartRequired, setRestartRequired] = useState(false)
   const [restarting, setRestarting] = useState(false)
 
+  const [logDownloading, setLogDownloading] = useState(false)
+
   const [xtreamTest, setXtreamTest] = useState({ loading: false, success: false, error: null })
   const [tmdbTest, setTmdbTest] = useState({ loading: false, success: false, error: null })
   const [tvdbTest, setTvdbTest] = useState({ loading: false, success: false, error: null })
@@ -283,6 +285,27 @@ export default function Settings() {
         .catch(() => setTimeout(poll, 500))
     }
     setTimeout(poll, 1000)
+  }
+
+  const downloadLogs = async () => {
+    setLogDownloading(true)
+    try {
+      const res = await fetch('/api/logs/download')
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `vodarr-${new Date().toISOString().slice(0, 10)}.log`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('log download failed', e)
+    } finally {
+      setLogDownloading(false)
+    }
   }
 
   const testXtream = async () => {
@@ -713,6 +736,19 @@ export default function Settings() {
                 <option value="error">error</option>
               </select>
             </Field>
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={downloadLogs}
+                disabled={logDownloading}
+                className="px-4 py-1.5 bg-void-600 border border-void-500 text-steel-400 rounded font-mono text-[12px] hover:bg-void-500 hover:text-steel-300 transition-all disabled:opacity-40"
+              >
+                {logDownloading ? 'Preparing…' : 'Download Logs'}
+              </button>
+              <p className="mt-1 font-mono text-[10px] text-steel-500">
+                Last ~5 000 lines. Credentials and IP addresses are redacted.
+              </p>
+            </div>
           </Section>
         </div>
 

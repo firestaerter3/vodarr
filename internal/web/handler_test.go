@@ -16,7 +16,7 @@ import (
 // makeHandler builds a Handler with the given config and no auth.
 // scheduler is nil — only call endpoints that don't use it.
 func makeHandler(cfg *config.Config, cfgPath string) *Handler {
-	return NewHandler(index.New(), nil, nil, nil, cfg, cfgPath, "", "", "test")
+	return NewHandler(index.New(), nil, nil, nil, nil, cfg, cfgPath, "", "", "test")
 }
 
 func minimalCfg() *config.Config {
@@ -361,7 +361,7 @@ func TestTestTMDBSentinelUsesStoredKey(t *testing.T) {
 
 func TestAuthRejectsWrongPassword(t *testing.T) {
 	cfg := minimalCfg()
-	h := NewHandler(index.New(), nil, nil, nil, cfg, "", "admin", "secret", "test")
+	h := NewHandler(index.New(), nil, nil, nil, nil, cfg, "", "admin", "secret", "test")
 
 	req := httptest.NewRequest("GET", "/api/config", nil)
 	req.SetBasicAuth("admin", "wrongpassword")
@@ -375,7 +375,7 @@ func TestAuthRejectsWrongPassword(t *testing.T) {
 
 func TestAuthAcceptsCorrectPassword(t *testing.T) {
 	cfg := minimalCfg()
-	h := NewHandler(index.New(), nil, nil, nil, cfg, "", "admin", "secret", "test")
+	h := NewHandler(index.New(), nil, nil, nil, nil, cfg, "", "admin", "secret", "test")
 
 	req := httptest.NewRequest("GET", "/api/config", nil)
 	req.SetBasicAuth("admin", "secret")

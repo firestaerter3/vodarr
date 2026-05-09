@@ -14,6 +14,7 @@ import (
 	"github.com/vodarr/vodarr/internal/config"
 	"github.com/vodarr/vodarr/internal/download"
 	"github.com/vodarr/vodarr/internal/index"
+	"github.com/vodarr/vodarr/internal/logbuf"
 	"github.com/vodarr/vodarr/internal/newznab"
 	"github.com/vodarr/vodarr/internal/probe"
 	"github.com/vodarr/vodarr/internal/qbit"
@@ -45,7 +46,9 @@ func main() {
 	case "error":
 		level = slog.LevelError
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	stdoutH := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+	logBuf := logbuf.New()
+	logger := slog.New(logbuf.NewFanHandler(stdoutH, logBuf))
 	slog.SetDefault(logger)
 
 	slog.Info("vodarr starting",
@@ -96,7 +99,7 @@ func main() {
 	// 2D: Pass qBit credentials from config; newznabSrvURL used to restrict SSRF to own Newznab host
 	qbitHandler := qbit.NewHandler(qbitStore, strmWriter, xc, probe.DefaultProber, cfg.Output.Path, cfg.Server.QbitUsername, cfg.Server.QbitPassword, newznabSrvURL, cfg.Output.Mode, dlManager)
 	// 2E: Pass web credentials from config
-	webHandler := web.NewHandler(idx, scheduler, strmWriter, web.StaticFS(), cfg, *configPath, cfg.Server.WebUsername, cfg.Server.WebPassword, version)
+	webHandler := web.NewHandler(idx, scheduler, strmWriter, web.StaticFS(), logBuf, cfg, *configPath, cfg.Server.WebUsername, cfg.Server.WebPassword, version)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
