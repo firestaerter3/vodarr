@@ -235,8 +235,11 @@ func TestMovieGrab_AuthRequired_Strm(t *testing.T) {
 	}
 
 	// 3. Authenticated grab → "Ok."
-	authReq, _ := http.NewRequest("POST", h.qbitSrv.URL+"/api/v2/torrents/add",
+	authReq, err := http.NewRequest("POST", h.qbitSrv.URL+"/api/v2/torrents/add",
 		strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("build auth request: %v", err)
+	}
 	authReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	authReq.AddCookie(&http.Cookie{Name: "SID", Value: sid})
 	authResp, err := http.DefaultClient.Do(authReq)
@@ -253,7 +256,10 @@ func TestMovieGrab_AuthRequired_Strm(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var hash, finalState string
 	for time.Now().Before(deadline) {
-		infoReq, _ := http.NewRequest("GET", h.qbitSrv.URL+"/api/v2/torrents/info", nil)
+		infoReq, err := http.NewRequest("GET", h.qbitSrv.URL+"/api/v2/torrents/info", nil)
+		if err != nil {
+			t.Fatalf("build info request: %v", err)
+		}
 		infoReq.AddCookie(&http.Cookie{Name: "SID", Value: sid})
 		infoResp, err := http.DefaultClient.Do(infoReq)
 		if err != nil {

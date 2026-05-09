@@ -192,17 +192,6 @@ func (h *harness) searchMovie(imdbID string) string {
 	return string(body)
 }
 
-func (h *harness) searchSeries(tvdbID string) string {
-	h.t.Helper()
-	resp, err := http.Get(h.newznabSrv.URL + "/api?t=tvsearch&tvdbid=" + tvdbID)
-	if err != nil {
-		h.t.Fatalf("searchSeries: %v", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	return string(body)
-}
-
 func (h *harness) searchText(q string) string {
 	h.t.Helper()
 	resp, err := http.Get(h.newznabSrv.URL + "/api?t=search&q=" + url.QueryEscape(q))
