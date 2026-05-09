@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,12 +12,13 @@ import (
 
 	"github.com/vodarr/vodarr/internal/config"
 	"github.com/vodarr/vodarr/internal/index"
+	"github.com/vodarr/vodarr/internal/update"
 )
 
 // makeHandler builds a Handler with the given config and no auth.
 // scheduler is nil — only call endpoints that don't use it.
 func makeHandler(cfg *config.Config, cfgPath string) *Handler {
-	return NewHandler(index.New(), nil, nil, nil, nil, cfg, cfgPath, "", "", "test")
+	return NewHandler(index.New(), nil, nil, nil, nil, cfg, cfgPath, "", "", "test", nil)
 }
 
 func minimalCfg() *config.Config {
@@ -361,7 +363,7 @@ func TestTestTMDBSentinelUsesStoredKey(t *testing.T) {
 
 func TestAuthRejectsWrongPassword(t *testing.T) {
 	cfg := minimalCfg()
-	h := NewHandler(index.New(), nil, nil, nil, nil, cfg, "", "admin", "secret", "test")
+	h := NewHandler(index.New(), nil, nil, nil, nil, cfg, "", "admin", "secret", "test", nil)
 
 	req := httptest.NewRequest("GET", "/api/config", nil)
 	req.SetBasicAuth("admin", "wrongpassword")
@@ -375,7 +377,7 @@ func TestAuthRejectsWrongPassword(t *testing.T) {
 
 func TestAuthAcceptsCorrectPassword(t *testing.T) {
 	cfg := minimalCfg()
-	h := NewHandler(index.New(), nil, nil, nil, nil, cfg, "", "admin", "secret", "test")
+	h := NewHandler(index.New(), nil, nil, nil, nil, cfg, "", "admin", "secret", "test", nil)
 
 	req := httptest.NewRequest("GET", "/api/config", nil)
 	req.SetBasicAuth("admin", "secret")
@@ -590,5 +592,124 @@ func TestPutConfigArrSentinelResolution(t *testing.T) {
 	}
 	if stored.Arr.Instances[0].APIKey != "stored-arr-key" {
 		t.Errorf("APIKey = %q, want stored-arr-key (sentinel resolved)", stored.Arr.Instances[0].APIKey)
+	}
+}
+
+// --- Update checker tests ---
+
+type stubChecker struct {
+	result      update.Result
+	invalidated bool
+}
+
+func (s *stubChecker) Check(_ context.Context, v string, beta bool) update.Result {
+	r := s.result
+	r.CurrentVersion = v
+	r.BetaChannel = beta
+	return r
+}
+
+func (s *stubChecker) InvalidateCache() { s.invalidated = true }
+
+func TestGetUpdateCheckerNil(t *testing.T) {
+	h := makeHandler(minimalCfg(), "")
+	req := httptest.NewRequest("GET", "/api/update", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["error"] == "" || resp["error"] == nil {
+		t.Error("expected non-empty error field when checker is nil")
+	}
+}
+
+func TestGetUpdateReturnsResult(t *testing.T) {
+	cfg := minimalCfg()
+	stub := &stubChecker{result: update.Result{
+		LatestVersion:   "1.5.0",
+		UpdateAvailable: true,
+		ImageTag:        "ghcr.io/firestaerter3/vodarr:latest",
+	}}
+	h := NewHandler(index.New(), nil, nil, nil, nil, cfg, "", "", "", "1.2.0", stub)
+
+	req := httptest.NewRequest("GET", "/api/update", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["current_version"] != "1.2.0" {
+		t.Errorf("current_version = %v, want 1.2.0", resp["current_version"])
+	}
+	if resp["latest_version"] != "1.5.0" {
+		t.Errorf("latest_version = %v, want 1.5.0", resp["latest_version"])
+	}
+	if resp["update_available"] != true {
+		t.Errorf("update_available = %v, want true", resp["update_available"])
+	}
+}
+
+func TestPutConfigInvalidatesCacheOnToggle(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+	cfg := minimalCfg()
+	cfg.Update.BetaChannel = false
+	stub := &stubChecker{}
+	h := NewHandler(index.New(), nil, nil, nil, nil, cfg, cfgPath, "", "", "test", stub)
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"xtream":  map[string]string{"url": "http://x.example.com", "username": "u", "password": passwordSentinel},
+		"tmdb":    map[string]string{"api_key": passwordSentinel},
+		"output":  map[string]interface{}{"path": dir, "movies_dir": "movies", "series_dir": "tv", "mode": "strm", "max_concurrent_downloads": 1, "download_delay": "30s"},
+		"sync":    map[string]interface{}{"interval": "6h", "on_startup": true, "parallelism": 4},
+		"server":  map[string]int{"newznab_port": 9091, "qbit_port": 9092, "web_port": 9090},
+		"logging": map[string]string{"level": "info"},
+		"update":  map[string]bool{"beta_channel": true},
+		"arr":     map[string]interface{}{"instances": []interface{}{}},
+	})
+	body := string(payload)
+	req := httptest.NewRequest("PUT", "/api/config", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if !stub.invalidated {
+		t.Error("InvalidateCache should have been called when beta_channel changed")
+	}
+}
+
+func TestGetConfigIncludesUpdateSection(t *testing.T) {
+	cfg := minimalCfg()
+	cfg.Update.BetaChannel = true
+	h := makeHandler(cfg, "")
+
+	req := httptest.NewRequest("GET", "/api/config", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	updateSection, ok := resp["update"].(map[string]interface{})
+	if !ok {
+		t.Fatal("response missing 'update' section")
+	}
+	if updateSection["beta_channel"] != true {
+		t.Errorf("update.beta_channel = %v, want true", updateSection["beta_channel"])
 	}
 }

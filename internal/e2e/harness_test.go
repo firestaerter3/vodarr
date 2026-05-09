@@ -163,7 +163,7 @@ func newHarnessWithAuth(t *testing.T, outputMode, qbitUsername, qbitPassword str
 
 	// 9. Web server (for webhook tests)
 	cfg := &config.Config{Output: config.OutputConfig{Path: tmpDir}}
-	webH := web.NewHandler(idx, nil, writer, nil, nil, cfg, "", "", "", "test")
+	webH := web.NewHandler(idx, nil, writer, nil, nil, cfg, "", "", "", "test", nil)
 	webSrv := httptest.NewServer(webH)
 	t.Cleanup(webSrv.Close)
 

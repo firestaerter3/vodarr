@@ -28,6 +28,7 @@ import (
 	"github.com/vodarr/vodarr/internal/strm"
 	"github.com/vodarr/vodarr/internal/tmdb"
 	"github.com/vodarr/vodarr/internal/tvdb"
+	"github.com/vodarr/vodarr/internal/update"
 	"github.com/vodarr/vodarr/internal/xtream"
 )
 
@@ -37,12 +38,19 @@ const passwordSentinel = "********"
 // package does not hard-depend on the logbuf concrete type in tests.
 type logLines interface{ Lines() []string }
 
+// updateChecker is satisfied by *update.Checker; kept as interface for nil-safe tests.
+type updateChecker interface {
+	Check(ctx context.Context, currentVersion string, betaChannel bool) update.Result
+	InvalidateCache()
+}
+
 // Handler serves the web UI backend API and the embedded static frontend.
 type Handler struct {
 	idx       *index.Index
 	scheduler *vodarrsync.Scheduler
-	writer    *strm.Writer // nil = strm refresh disabled
-	logBuf    logLines     // nil = log download disabled
+	writer    *strm.Writer  // nil = strm refresh disabled
+	logBuf    logLines      // nil = log download disabled
+	checker   updateChecker // nil = update check disabled
 	version   string
 	username  string // 2E: optional basic auth for API endpoints
 	password  string
@@ -54,12 +62,13 @@ type Handler struct {
 	refreshing atomic.Bool // guards against concurrent /api/strm/refresh calls
 }
 
-func NewHandler(idx *index.Index, scheduler *vodarrsync.Scheduler, writer *strm.Writer, staticFS fs.FS, logBuf logLines, cfg *config.Config, cfgPath string, username, password, version string) *Handler {
+func NewHandler(idx *index.Index, scheduler *vodarrsync.Scheduler, writer *strm.Writer, staticFS fs.FS, logBuf logLines, cfg *config.Config, cfgPath string, username, password, version string, checker updateChecker) *Handler {
 	h := &Handler{
 		idx:       idx,
 		scheduler: scheduler,
 		writer:    writer,
 		logBuf:    logBuf,
+		checker:   checker,
 		version:   version,
 		username:  username,
 		password:  password,
@@ -122,6 +131,7 @@ func (h *Handler) registerRoutes(staticFS fs.FS) {
 	h.mux.HandleFunc("POST /api/strm/refresh", auth(h.handleStrmRefresh))
 	h.mux.HandleFunc("GET /api/sync/history", auth(h.handleSyncHistory))
 	h.mux.HandleFunc("GET /api/logs/download", auth(h.handleLogsDownload))
+	h.mux.HandleFunc("GET /api/update", auth(h.handleGetUpdate))
 
 	// Serve embedded static frontend; fall back to index.html for SPA routing
 	if staticFS != nil {
@@ -223,6 +233,11 @@ type configResponse struct {
 	Server  serverConfigResp  `json:"server"`
 	Logging loggingConfigResp `json:"logging"`
 	Arr     arrConfigResp     `json:"arr"`
+	Update  updateConfigResp  `json:"update"`
+}
+
+type updateConfigResp struct {
+	BetaChannel bool `json:"beta_channel"`
 }
 
 type arrConfigResp struct {
@@ -312,6 +327,9 @@ func (h *Handler) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		Logging: loggingConfigResp{
 			Level: cfg.Logging.Level,
 		},
+		Update: updateConfigResp{
+			BetaChannel: cfg.Update.BetaChannel,
+		},
 		Arr: func() arrConfigResp {
 			instances := make([]arrInstanceResp, len(cfg.Arr.Instances))
 			for i, inst := range cfg.Arr.Instances {
@@ -362,6 +380,9 @@ type putConfigRequest struct {
 	Logging struct {
 		Level string `json:"level"`
 	} `json:"logging"`
+	Update struct {
+		BetaChannel bool `json:"beta_channel"`
+	} `json:"update"`
 	Arr struct {
 		Instances []struct {
 			Name   string `json:"name"`
@@ -416,6 +437,8 @@ func (h *Handler) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	newCfg.Sync.TitleCleanupPatterns = cleanPatterns
 	newCfg.Logging.Level = req.Logging.Level
+	prevBeta := h.cfg.Update.BetaChannel
+	newCfg.Update.BetaChannel = req.Update.BetaChannel
 
 	// Only override the three public port fields; preserve all other ServerConfig fields
 	newCfg.Server = h.cfg.Server
@@ -472,6 +495,9 @@ func (h *Handler) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.cfg = &newCfg
+	if h.checker != nil && prevBeta != newCfg.Update.BetaChannel {
+		h.checker.InvalidateCache()
+	}
 	h.writeJSON(w, map[string]interface{}{"restart_required": true})
 }
 
@@ -1531,4 +1557,17 @@ func (h *Handler) handleLogsDownload(w http.ResponseWriter, _ *http.Request) {
 	for _, line := range h.logBuf.Lines() {
 		fmt.Fprintln(w, logbuf.Sanitize(line))
 	}
+}
+
+func (h *Handler) handleGetUpdate(w http.ResponseWriter, r *http.Request) {
+	if h.checker == nil {
+		h.writeJSON(w, update.Result{Error: "update checker not configured"})
+		return
+	}
+	h.cfgMu.RLock()
+	betaChannel := h.cfg.Update.BetaChannel
+	h.cfgMu.RUnlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	h.writeJSON(w, h.checker.Check(ctx, h.version, betaChannel))
 }

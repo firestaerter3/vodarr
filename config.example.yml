@@ -42,3 +42,6 @@ logging:
 #       type: radarr
 #       url: "http://<host>:7878"
 #       api_key: "<api-key>"
+
+# update:
+#   beta_channel: false       # true = receive pre-release (beta) Docker builds

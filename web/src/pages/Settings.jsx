@@ -8,6 +8,7 @@ const DEFAULT = {
   server: { newznab_port: 9091, qbit_port: 9092, web_port: 9090 },
   logging: { level: 'info' },
   arr: { instances: [] },
+  update: { beta_channel: false },
 }
 
 const BLANK_ARR_INSTANCE = { name: '', type: 'sonarr', url: '', api_key: '' }
@@ -121,6 +122,8 @@ export default function Settings() {
   const [restarting, setRestarting] = useState(false)
 
   const [logDownloading, setLogDownloading] = useState(false)
+  const [updateInfo, setUpdateInfo] = useState(null)
+  const [updateLoading, setUpdateLoading] = useState(false)
 
   const [xtreamTest, setXtreamTest] = useState({ loading: false, success: false, error: null })
   const [tmdbTest, setTmdbTest] = useState({ loading: false, success: false, error: null })
@@ -139,6 +142,7 @@ export default function Settings() {
       })
       .catch(e => setLoadError(e.message))
     fetchArrStatus()
+    fetchUpdateInfo()
   }, [])
 
   const fetchArrStatus = () => {
@@ -146,6 +150,15 @@ export default function Settings() {
       .then(r => r.json())
       .then(data => setArrStatus(data))
       .catch(() => {}) // non-fatal
+  }
+
+  const fetchUpdateInfo = () => {
+    setUpdateLoading(true)
+    fetch('/api/update')
+      .then(r => r.json())
+      .then(data => setUpdateInfo(data))
+      .catch(() => {})
+      .finally(() => setUpdateLoading(false))
   }
 
   const addArrInstance = () => {
@@ -285,6 +298,15 @@ export default function Settings() {
         .catch(() => setTimeout(poll, 500))
     }
     setTimeout(poll, 1000)
+  }
+
+  const handleBetaToggle = async (v) => {
+    set('update.beta_channel', v)
+    const next = structuredClone(cfg)
+    next.update = { beta_channel: v }
+    next.sync.title_cleanup_patterns = patternsText.split('\n').filter(l => l.trim())
+    await saveConfig(next)
+    fetchUpdateInfo()
   }
 
   const downloadLogs = async () => {
@@ -749,6 +771,54 @@ export default function Settings() {
                 Last ~5 000 lines. Credentials and IP addresses are redacted.
               </p>
             </div>
+          </Section>
+        </div>
+
+        {/* Updates */}
+        <div className="animate-fade-up animate-fade-up-4">
+          <Section title="Updates">
+            <div className="flex items-center justify-between">
+              <Field label="Beta Channel">
+                <span className="font-mono text-[11px] text-steel-500">
+                  Receive pre-release builds instead of stable releases
+                </span>
+              </Field>
+              <Toggle value={cfg.update?.beta_channel ?? false} onChange={handleBetaToggle} />
+            </div>
+
+            {updateLoading && (
+              <p className="font-mono text-[11px] text-steel-500">Checking for updates…</p>
+            )}
+
+            {updateInfo && !updateLoading && (
+              <div className="border-t border-void-600 pt-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[11px] text-steel-500">Current version</span>
+                  <span className="font-mono text-[11px] text-steel-300">{updateInfo.current_version || '—'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[11px] text-steel-500">Latest available</span>
+                  <span className="font-mono text-[11px] text-steel-300">
+                    {updateInfo.latest_version
+                      ? `${updateInfo.latest_version}${updateInfo.is_prerelease ? ' (beta)' : ''}`
+                      : '—'}
+                  </span>
+                </div>
+                {updateInfo.update_available && (
+                  <div className="mt-2 px-3 py-2 bg-lime-400/10 border border-lime-400/30 rounded">
+                    <p className="font-mono text-[11px] text-lime-400">Update available — pull the new image:</p>
+                    <code className="block mt-1 font-mono text-[11px] text-steel-300 break-all">
+                      docker pull {updateInfo.image_tag}
+                    </code>
+                  </div>
+                )}
+                {updateInfo.error && (
+                  <p className="font-mono text-[11px] text-yellow-400/80">
+                    Could not check for updates: {updateInfo.error}
+                  </p>
+                )}
+              </div>
+            )}
           </Section>
         </div>
 

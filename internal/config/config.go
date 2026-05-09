@@ -19,6 +19,7 @@ type Config struct {
 	Server  ServerConfig  `yaml:"server"`
 	Logging LoggingConfig `yaml:"logging"`
 	Arr     ArrConfig     `yaml:"arr"`
+	Update  UpdateConfig  `yaml:"update"`
 }
 
 type ArrConfig struct {
@@ -82,6 +83,10 @@ type ServerConfig struct {
 
 type LoggingConfig struct {
 	Level string `yaml:"level"`
+}
+
+type UpdateConfig struct {
+	BetaChannel bool `yaml:"beta_channel"`
 }
 
 // Save marshals cfg to YAML and writes it atomically to path.
