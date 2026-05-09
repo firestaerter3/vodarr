@@ -177,10 +177,19 @@ func TestUnenrichedMovie_Strm(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	files := h.torrentFiles(hash)
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file entry, got %d: %v", len(files), files)
+	}
+
 	// No year → folder is "Unknown Film" (no parenthesised year suffix)
 	strmRel := filepath.Join("movies", "Unknown Film", "Unknown.Film.WEB-DL.strm")
 	if !h.fileExists(strmRel) {
 		t.Errorf(".strm not found at %s (unenriched movie)", strmRel)
+	}
+	mkvRel := filepath.Join("movies", "Unknown Film", "Unknown.Film.WEB-DL.mkv")
+	if !h.fileExists(mkvRel) {
+		t.Errorf(".mkv stub not found at %s (unenriched movie)", mkvRel)
 	}
 }
 
