@@ -71,6 +71,14 @@ func TestMovieGrab_Torrent_Strm(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	files := h.torrentFiles(hash)
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file entry, got %d: %v", len(files), files)
+	}
+	if !strings.HasSuffix(files[0], ".mkv") {
+		t.Errorf("torrent file should be .mkv, got %q", files[0])
+	}
+
 	strmRel := filepath.Join("movies", "The Matrix (1999)", "The.Matrix.1999.WEB-DL.strm")
 	if !h.fileExists(strmRel) {
 		t.Errorf(".strm not found at %s (torrent grab path)", strmRel)
@@ -115,8 +123,8 @@ func TestSeriesGrab_URL_Strm(t *testing.T) {
 			t.Errorf(".strm not found: %s", rel)
 			continue
 		}
-		if !strings.Contains(h.fileContent(rel), "/series/") {
-			t.Errorf(".strm at %s does not contain /series/ in URL", rel)
+		if !strings.HasPrefix(strings.TrimSpace(h.fileContent(rel)), h.xtreamSrv.URL+"/series/") {
+			t.Errorf(".strm at %s does not start with %s/series/", rel, h.xtreamSrv.URL)
 		}
 	}
 }
@@ -234,7 +242,7 @@ func TestMovieGrab_AuthRequired_Strm(t *testing.T) {
 
 	// 4. Poll torrents/info with SID cookie until pausedUP
 	deadline := time.Now().Add(2 * time.Second)
-	var hash string
+	var hash, finalState string
 	for time.Now().Before(deadline) {
 		infoReq, _ := http.NewRequest("GET", h.qbitSrv.URL+"/api/v2/torrents/info", nil)
 		infoReq.AddCookie(&http.Cookie{Name: "SID", Value: sid})
@@ -250,7 +258,8 @@ func TestMovieGrab_AuthRequired_Strm(t *testing.T) {
 		infoResp.Body.Close()
 		if len(torrents) > 0 {
 			hash = torrents[0].Hash
-			if torrents[0].State == "pausedUP" {
+			finalState = torrents[0].State
+			if finalState == "pausedUP" {
 				break
 			}
 		}
@@ -258,6 +267,9 @@ func TestMovieGrab_AuthRequired_Strm(t *testing.T) {
 	}
 	if hash == "" {
 		t.Fatal("no torrent in store after authenticated grab")
+	}
+	if finalState != "pausedUP" {
+		t.Fatalf("torrent %s did not reach pausedUP within 2s (last state: %q)", hash, finalState)
 	}
 
 	strmRel := filepath.Join("movies", "The Matrix (1999)", "The.Matrix.1999.WEB-DL.strm")
