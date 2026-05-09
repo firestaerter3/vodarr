@@ -20,7 +20,7 @@ import (
 // newAuthedHandler builds a Handler with username/password auth.
 func newAuthedHandler(savePath string) *Handler {
 	store := NewStore()
-	return NewHandler(store, nil, nil, nil, savePath, "admin", "secret", "")
+	return NewHandler(store, nil, nil, nil, savePath, "admin", "secret", "", "strm", nil)
 }
 
 // loginAndGetSID performs POST /api/v2/auth/login and returns the SID cookie value.
@@ -299,7 +299,7 @@ func makeGrabHandler(t *testing.T, outputDir string) (*Handler, *httptest.Server
 	xc := xtream.NewClient(descriptorSrv.URL, "user", "pass")
 
 	store := NewStore()
-	h := NewHandler(store, writer, xc, nil, outputDir, "", "", "")
+	h := NewHandler(store, writer, xc, nil, outputDir, "", "", "", "strm", nil)
 	return h, descriptorSrv
 }
 

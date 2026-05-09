@@ -394,6 +394,11 @@ func TestBuildTitle(t *testing.T) {
 			&index.Item{Name: "Some Movie [2021]", Year: "2021", ContainerExt: "mkv"},
 			"Some.Movie.2021.WEB-DL.mkv",
 		},
+		// Parenthesised year stripped.
+		{
+			&index.Item{Name: "Some Movie (2021)", Year: "2021", ContainerExt: "mkv"},
+			"Some.Movie.2021.WEB-DL.mkv",
+		},
 		// NL GESPROKEN replaced with DUTCH.
 		{
 			&index.Item{Name: "Lieve Mama (NL GESPROKEN)", Year: "2018", ContainerExt: "mkv"},

@@ -18,7 +18,7 @@ import (
 // The writer, xtream, and prober fields are nil; only call endpoints that don't need them.
 func makeQbitHandler(savePath string) *Handler {
 	store := NewStore()
-	return NewHandler(store, nil, nil, nil, savePath, "", "", "")
+	return NewHandler(store, nil, nil, nil, savePath, "", "", "", "strm", nil)
 }
 
 func TestTorrentsFilesRelativePaths(t *testing.T) {

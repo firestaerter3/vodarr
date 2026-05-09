@@ -240,9 +240,13 @@ type tmdbConfigResp struct {
 }
 
 type outputConfigResp struct {
-	Path      string `json:"path"`
-	MoviesDir string `json:"movies_dir"`
-	SeriesDir string `json:"series_dir"`
+	Path                   string `json:"path"`
+	MoviesDir              string `json:"movies_dir"`
+	SeriesDir              string `json:"series_dir"`
+	Mode                   string `json:"mode"`
+	MaxConcurrentDownloads int    `json:"max_concurrent_downloads"`
+	DownloadDelay          string `json:"download_delay"`
+	BandwidthLimit         string `json:"bandwidth_limit"`
 }
 
 type syncConfigResp struct {
@@ -278,9 +282,13 @@ func (h *Handler) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			TVDBAPIKey: maskIfSet(cfg.TMDB.TVDBAPIKey),
 		},
 		Output: outputConfigResp{
-			Path:      cfg.Output.Path,
-			MoviesDir: cfg.Output.MoviesDir,
-			SeriesDir: cfg.Output.SeriesDir,
+			Path:                   cfg.Output.Path,
+			MoviesDir:              cfg.Output.MoviesDir,
+			SeriesDir:              cfg.Output.SeriesDir,
+			Mode:                   cfg.Output.Mode,
+			MaxConcurrentDownloads: cfg.Output.MaxConcurrentDownloads,
+			DownloadDelay:          cfg.Output.DownloadDelay,
+			BandwidthLimit:         cfg.Output.BandwidthLimit,
 		},
 		Sync: syncConfigResp{
 			Interval:             cfg.Sync.Interval,
@@ -324,9 +332,13 @@ type putConfigRequest struct {
 		TVDBAPIKey string `json:"tvdb_api_key"`
 	} `json:"tmdb"`
 	Output struct {
-		Path      string `json:"path"`
-		MoviesDir string `json:"movies_dir"`
-		SeriesDir string `json:"series_dir"`
+		Path                   string `json:"path"`
+		MoviesDir              string `json:"movies_dir"`
+		SeriesDir              string `json:"series_dir"`
+		Mode                   string `json:"mode"`
+		MaxConcurrentDownloads int    `json:"max_concurrent_downloads"`
+		DownloadDelay          string `json:"download_delay"`
+		BandwidthLimit         string `json:"bandwidth_limit"`
 	} `json:"output"`
 	Sync struct {
 		Interval             string   `json:"interval"`
@@ -374,6 +386,14 @@ func (h *Handler) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	newCfg.Output.Path = req.Output.Path
 	newCfg.Output.MoviesDir = req.Output.MoviesDir
 	newCfg.Output.SeriesDir = req.Output.SeriesDir
+	newCfg.Output.Mode = req.Output.Mode
+	if req.Output.MaxConcurrentDownloads != 0 {
+		newCfg.Output.MaxConcurrentDownloads = req.Output.MaxConcurrentDownloads
+	}
+	if req.Output.DownloadDelay != "" {
+		newCfg.Output.DownloadDelay = req.Output.DownloadDelay
+	}
+	newCfg.Output.BandwidthLimit = req.Output.BandwidthLimit
 	newCfg.Sync.Interval = req.Sync.Interval
 	newCfg.Sync.OnStartup = req.Sync.OnStartup
 	if req.Sync.Parallelism != 0 {

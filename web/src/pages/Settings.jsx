@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 const DEFAULT = {
   xtream: { url: '', username: '', password: '' },
   tmdb: { api_key: '', tvdb_api_key: '' },
-  output: { path: '/data/strm', movies_dir: 'movies', series_dir: 'tv' },
+  output: { path: '/data/strm', movies_dir: 'movies', series_dir: 'tv', mode: 'strm', max_concurrent_downloads: 1, download_delay: '30s', bandwidth_limit: '' },
   sync: { interval: '6h', on_startup: true, parallelism: 10, title_cleanup_patterns: [] },
   server: { newznab_port: 9091, qbit_port: 9092, web_port: 9090 },
   logging: { level: 'info' },
@@ -571,8 +571,53 @@ export default function Settings() {
 
         {/* Output */}
         <div className="animate-fade-up animate-fade-up-3">
-          <Section title="Output Paths">
-            <Field label="Base Path" hint="Root directory where .strm files will be written">
+          <Section title="Output">
+            <Field label="Mode" hint={cfg.output.mode === 'download'
+              ? 'Downloads actual media files from the provider. Uses real disk space.'
+              : 'Writes .strm pointer files. No disk space used — streams directly from provider.'}>
+              <select
+                value={cfg.output.mode || 'strm'}
+                onChange={e => set('output.mode', e.target.value)}
+                className="w-full px-3 py-2 bg-void-800 border border-void-600 rounded font-mono text-[13px] text-steel-300"
+              >
+                <option value="strm">strm — stream from provider</option>
+                <option value="download">download — save files to disk</option>
+              </select>
+            </Field>
+            {cfg.output.mode === 'download' && (
+              <>
+                <div className="grid grid-cols-3 gap-4">
+                  <Field label="Max Concurrent Downloads" hint="1-2 recommended to avoid provider bans.">
+                    <TextInput
+                      value={cfg.output.max_concurrent_downloads}
+                      onChange={v => set('output.max_concurrent_downloads', parseInt(v, 10) || 1)}
+                      type="number"
+                      monospace
+                    />
+                  </Field>
+                  <Field label="Delay Between Downloads" hint="Pause after each download. Prevents back-to-back pattern that looks automated.">
+                    <TextInput
+                      value={cfg.output.download_delay}
+                      onChange={v => set('output.download_delay', v)}
+                      placeholder="30s"
+                      monospace
+                    />
+                  </Field>
+                  <Field label="Bandwidth Limit" hint="Max speed per download, e.g. 20M (MB/s). Empty = unlimited.">
+                    <TextInput
+                      value={cfg.output.bandwidth_limit}
+                      onChange={v => set('output.bandwidth_limit', v)}
+                      placeholder="unlimited"
+                      monospace
+                    />
+                  </Field>
+                </div>
+                <p className="font-mono text-[10px] text-steel-500 -mt-1">
+                  Downloads use a VLC-like user agent to blend in with normal streaming traffic.
+                </p>
+              </>
+            )}
+            <Field label="Base Path" hint="Root directory where files will be written">
               <TextInput value={cfg.output.path} onChange={v => set('output.path', v)} monospace />
             </Field>
             <div className="grid grid-cols-2 gap-4">

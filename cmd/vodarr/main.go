@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/vodarr/vodarr/internal/config"
+	"github.com/vodarr/vodarr/internal/download"
 	"github.com/vodarr/vodarr/internal/index"
 	"github.com/vodarr/vodarr/internal/newznab"
 	"github.com/vodarr/vodarr/internal/probe"
@@ -76,8 +77,24 @@ func main() {
 
 	// 2C: Pass APIKey from config; xc satisfies URLBuilder for on-demand size probing
 	newznabHandler := newznab.NewHandler(idx, cfg.Server.APIKey, newznabSrvURL, xc)
+
+	// Download manager: only created when output.mode == "download"
+	var dlManager *download.Manager
+	if cfg.Output.Mode == "download" {
+		dlManager = download.NewManager(download.Options{
+			MaxConcurrent:  cfg.Output.MaxConcurrentDownloads,
+			InterDelay:     cfg.Output.ParsedDownloadDelay,
+			BandwidthLimit: cfg.Output.ParsedBandwidthLimit,
+		})
+		slog.Info("download mode enabled",
+			"max_concurrent", cfg.Output.MaxConcurrentDownloads,
+			"inter_delay", cfg.Output.ParsedDownloadDelay,
+			"bandwidth_limit", cfg.Output.BandwidthLimit,
+		)
+	}
+
 	// 2D: Pass qBit credentials from config; newznabSrvURL used to restrict SSRF to own Newznab host
-	qbitHandler := qbit.NewHandler(qbitStore, strmWriter, xc, probe.DefaultProber, cfg.Output.Path, cfg.Server.QbitUsername, cfg.Server.QbitPassword, newznabSrvURL)
+	qbitHandler := qbit.NewHandler(qbitStore, strmWriter, xc, probe.DefaultProber, cfg.Output.Path, cfg.Server.QbitUsername, cfg.Server.QbitPassword, newznabSrvURL, cfg.Output.Mode, dlManager)
 	// 2E: Pass web credentials from config
 	webHandler := web.NewHandler(idx, scheduler, strmWriter, web.StaticFS(), cfg, *configPath, cfg.Server.WebUsername, cfg.Server.WebPassword, version)
 

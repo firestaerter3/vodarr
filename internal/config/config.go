@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,9 +44,17 @@ type TMDBConfig struct {
 }
 
 type OutputConfig struct {
-	Path       string `yaml:"path"`
-	MoviesDir  string `yaml:"movies_dir"`
-	SeriesDir  string `yaml:"series_dir"`
+	Path                   string `yaml:"path"`
+	MoviesDir              string `yaml:"movies_dir"`
+	SeriesDir              string `yaml:"series_dir"`
+	Mode                   string `yaml:"mode"`                     // "strm" (default) or "download"
+	MaxConcurrentDownloads int    `yaml:"max_concurrent_downloads"` // download mode only; default 1
+	DownloadDelay          string `yaml:"download_delay"`           // pause between downloads; Go duration (default "30s")
+	BandwidthLimit         string `yaml:"bandwidth_limit"`          // max download speed e.g. "20M" (MB/s); empty = unlimited
+
+	// Parsed values (not from YAML directly)
+	ParsedDownloadDelay  time.Duration `yaml:"-"`
+	ParsedBandwidthLimit int64         `yaml:"-"` // bytes/sec
 }
 
 type SyncConfig struct {
@@ -150,8 +159,11 @@ func Load(path string) (*Config, error) {
 func defaults() *Config {
 	return &Config{
 		Output: OutputConfig{
-			MoviesDir: "movies",
-			SeriesDir: "tv",
+			MoviesDir:              "movies",
+			SeriesDir:              "tv",
+			Mode:                   "strm",
+			MaxConcurrentDownloads: 1,
+			DownloadDelay:          "30s",
 		},
 		Sync: SyncConfig{
 			Interval:    "6h",
@@ -213,5 +225,69 @@ func (c *Config) validate() error {
 		c.Sync.Parallelism = 20
 	}
 
+	switch c.Output.Mode {
+	case "", "strm", "download":
+	default:
+		return fmt.Errorf("output.mode must be \"strm\" or \"download\", got %q", c.Output.Mode)
+	}
+	if c.Output.Mode == "" {
+		c.Output.Mode = "strm"
+	}
+	if c.Output.Mode == "download" {
+		if c.Output.MaxConcurrentDownloads < 1 {
+			c.Output.MaxConcurrentDownloads = 1
+		}
+		if c.Output.MaxConcurrentDownloads > 5 {
+			c.Output.MaxConcurrentDownloads = 5
+		}
+
+		if c.Output.DownloadDelay == "" {
+			c.Output.DownloadDelay = "30s"
+		}
+		dd, err := time.ParseDuration(c.Output.DownloadDelay)
+		if err != nil {
+			return fmt.Errorf("output.download_delay is invalid: %w", err)
+		}
+		if dd < 0 {
+			dd = 0
+		}
+		c.Output.ParsedDownloadDelay = dd
+
+		if c.Output.BandwidthLimit != "" {
+			bw, err := parseBandwidth(c.Output.BandwidthLimit)
+			if err != nil {
+				return fmt.Errorf("output.bandwidth_limit is invalid: %w", err)
+			}
+			c.Output.ParsedBandwidthLimit = bw
+		}
+	}
+
 	return nil
+}
+
+// parseBandwidth parses a human-friendly bandwidth string like "20M" (20 MB/s),
+// "500K" (500 KB/s), or a plain number (bytes/sec).
+func parseBandwidth(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	multiplier := int64(1)
+	upper := strings.ToUpper(s)
+	switch {
+	case strings.HasSuffix(upper, "M"):
+		multiplier = 1024 * 1024
+		s = s[:len(s)-1]
+	case strings.HasSuffix(upper, "K"):
+		multiplier = 1024
+		s = s[:len(s)-1]
+	}
+	n, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return 0, fmt.Errorf("cannot parse %q as bandwidth", s)
+	}
+	if n <= 0 {
+		return 0, nil
+	}
+	return int64(n * float64(multiplier)), nil
 }
