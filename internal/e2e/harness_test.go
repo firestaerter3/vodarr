@@ -316,7 +316,8 @@ func (h *harness) grabByTorrent(torrentBytes []byte, savePath, category string) 
 }
 
 // latestHash returns the hash of the first torrent in the store.
-// Safe because each test creates a fresh harness with an empty store.
+// Correct only when exactly one grab has been issued since the harness was
+// created. Map iteration is non-deterministic — do not call after multiple grabs.
 func (h *harness) latestHash() string {
 	h.t.Helper()
 	resp, err := http.Get(h.qbitSrv.URL + "/api/v2/torrents/info")
