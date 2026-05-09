@@ -26,8 +26,7 @@ import (
 func newHarnessThrottled(t *testing.T, bytesPerSec int64) *harness {
 	t.Helper()
 
-	// Use strm mode so the base harness's background goroutines do not interfere.
-	base := newHarness(t, "strm")
+	base := newHarness(t, "download")
 
 	// Reconstruct the xtream client using the same credentials as harness_test.go.
 	xc := xtream.NewClient(base.xtreamSrv.URL, "user", "pass")
