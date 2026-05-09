@@ -4,23 +4,23 @@
     {
       "id": 9,
       "subject": "Task 1: Harness (internal/e2e/harness_test.go)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Compile-ready shared test harness with all 3 in-process servers and every HTTP helper method the tests call.\n\n**Files:**\n- Create: `internal/e2e/harness_test.go`\n\n**Acceptance Criteria:**\n- [ ] `go test -run '^$' -count=1 ./internal/e2e/` compiles without error\n- [ ] `go vet ./internal/e2e/` reports no issues\n- [ ] `newHarness`, `newHarnessWithAuth`, and all helpers have correct signatures\n\n**Verify:** `go test -run '^$' -count=1 ./internal/e2e/` → `ok`\n\n**Steps:**\n- [ ] Create `internal/e2e/harness_test.go` with full harness code from plan\n- [ ] Verify compilation\n- [ ] Commit\n\n```json:metadata\n{\"files\": [\"internal/e2e/harness_test.go\"], \"verifyCommand\": \"go test -run '^$' -count=1 ./internal/e2e/\", \"acceptanceCriteria\": [\"package compiles without error\", \"go vet passes\", \"all helper methods present\"]}\n```"
     },
     {
       "id": 10,
       "subject": "Task 2: STRM Mode Tests (internal/e2e/strm_test.go)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9],
       "description": "**Goal:** 7 passing STRM output mode tests covering all Sonarr/Radarr grab scenarios.\n\n**Files:**\n- Create: `internal/e2e/strm_test.go`\n\n**Acceptance Criteria:**\n- [ ] All 7 tests pass\n- [ ] No test >2 s wall-clock time\n- [ ] TestMovieGrab_URL_Strm: .strm content starts with xtreamSrv.URL+\"/movie/\"\n- [ ] TestSeriesGrab_URL_Strm: 3 .strm files in correct Season dirs\n- [ ] TestWebhookStubCleanup_Strm: .mkv deleted, .strm preserved\n\n**Verify:** `go test -v -count=1 -timeout 30s ./internal/e2e/ -run 'Strm|TestMovieGrab_AuthRequired|TestWebhookStub'` → 7 PASS\n\n```json:metadata\n{\"files\": [\"internal/e2e/strm_test.go\"], \"verifyCommand\": \"go test -v -count=1 -timeout 30s ./internal/e2e/ -run 'Strm|TestMovieGrab_AuthRequired|TestWebhookStub'\", \"acceptanceCriteria\": [\"all 7 tests pass\", \"no test >2s\"]}\n```"
     },
     {
       "id": 11,
       "subject": "Task 3: Download Mode Tests (internal/e2e/download_test.go)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9],
       "description": "**Goal:** 4 passing download output mode tests covering file writes, byte counts, progress tracking, and provider error handling.\n\n**Files:**\n- Create: `internal/e2e/download_test.go`\n\n**Acceptance Criteria:**\n- [ ] All 4 tests pass\n- [ ] TestMovieGrab_URL_Download: file size == 307200 bytes\n- [ ] TestProgressTracking_Download: intermediate progress observed\n- [ ] TestProviderError_Download: waitForState times out, no file on disk\n\n**Verify:** `go test -v -count=1 -timeout 60s ./internal/e2e/ -run 'Download'` → 4 PASS\n\n```json:metadata\n{\"files\": [\"internal/e2e/download_test.go\"], \"verifyCommand\": \"go test -v -count=1 -timeout 60s ./internal/e2e/ -run 'Download'\", \"acceptanceCriteria\": [\"all 4 tests pass\", \"file sizes byte-exact\", \"intermediate progress observed\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-05-09T00:00:00Z"
+  "lastUpdated": "2026-05-09T13:00:00Z"
 }
