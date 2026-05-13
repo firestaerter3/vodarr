@@ -26,15 +26,20 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.version=${VERSION}
 # ---- Runtime stage ----
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates tzdata ffmpeg
+RUN apk add --no-cache ca-certificates tzdata ffmpeg && \
+    addgroup -S -g 1000 vodarr && \
+    adduser -S -u 1000 -G vodarr -H vodarr
 
 WORKDIR /app
 
 COPY --from=builder /build/vodarr /app/vodarr
 COPY config.example.yml /app/config.example.yml
 
-# Default config location (override with -config flag or mount config.yml)
+RUN mkdir -p /config /data && chown -R vodarr:vodarr /app /config /data
+
 VOLUME ["/config", "/data"]
+
+USER vodarr
 
 EXPOSE 9090 9091 9092
 
