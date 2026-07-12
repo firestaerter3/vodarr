@@ -22,3 +22,7 @@ internal/web/dist/
 
 # Git worktrees
 .worktrees/
+
+# Internal planning / spec drafts — kept local, not published
+docs/plans/
+docs/superpowers/
