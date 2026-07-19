@@ -73,7 +73,7 @@ type VODStream struct {
 	Genre        string  `json:"genre"`
 	ReleaseDate  string  `json:"releaseDate"`
 	Duration     string  `json:"duration"`
-	Backdrop     string  `json:"backdrop_path"`
+	Backdrop     FlexStringSlice `json:"backdrop_path"`
 	Poster       string  `json:"stream_icon"`
 	Year         string  `json:"year"`
 }
@@ -98,7 +98,7 @@ type VODInfoDetail struct {
 	ReleaseDate string           `json:"releasedate"`
 	Rating      FlexFloat        `json:"rating"`
 	Duration    string           `json:"duration"`
-	Backdrop    []string         `json:"backdrop_path"`
+	Backdrop    FlexStringSlice  `json:"backdrop_path"`
 	Bitrate     int              `json:"bitrate"`
 	Video       VODVideoInfo     `json:"video"`
 }
@@ -123,7 +123,7 @@ type Series struct {
 	Rating     FlexFloat `json:"rating"`
 	TMDBId     FlexInt   `json:"tmdb"`
 	YouTubeTrailer string `json:"youtube_trailer"`
-	Backdrop   []string  `json:"backdrop_path"`
+	Backdrop   FlexStringSlice `json:"backdrop_path"`
 }
 
 // SeriesInfo holds seasons and episodes for a series.
@@ -143,7 +143,7 @@ type SeriesInfoDetail struct {
 	ReleaseDate string    `json:"releasedate"`
 	Rating      FlexFloat `json:"rating"`
 	TMDBId      FlexInt   `json:"tmdb_id"`
-	Backdrop    []string  `json:"backdrop_path"`
+	Backdrop    FlexStringSlice `json:"backdrop_path"`
 }
 
 type SeasonInfo struct {
@@ -440,6 +440,31 @@ func (f *FlexInt) UnmarshalJSON(data []byte) error {
 }
 
 func (f FlexInt) Int() int { return int(f) }
+
+// FlexStringSlice handles providers that send a list-typed field (e.g.
+// backdrop_path) as any of: a JSON array of strings, a single bare string, or
+// false/null/"" when empty. It never returns an error so one malformed field
+// on one item cannot abort an entire sync.
+type FlexStringSlice []string
+
+func (f *FlexStringSlice) UnmarshalJSON(data []byte) error {
+	s := strings.TrimSpace(string(data))
+	if s == "" || s == "null" || s == "false" || s == `""` {
+		*f = nil
+		return nil
+	}
+	if s[0] == '[' {
+		var ss []string
+		if err := json.Unmarshal([]byte(s), &ss); err != nil {
+			*f = nil
+			return nil
+		}
+		*f = ss
+		return nil
+	}
+	*f = FlexStringSlice{strings.Trim(s, `"`)}
+	return nil
+}
 
 // FlexFloat handles providers that send floats as strings or numbers.
 type FlexFloat float64

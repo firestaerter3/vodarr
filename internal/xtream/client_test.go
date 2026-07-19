@@ -159,3 +159,40 @@ func TestBuildStreamURL(t *testing.T) {
 		}
 	}
 }
+
+// TestFlexStringSliceUnmarshal covers the provider inconsistencies that
+// previously aborted the whole series sync: backdrop_path arriving as a bare
+// string, false, null, "", or the expected array.
+func TestFlexStringSliceUnmarshal(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"array", `["a","b"]`, []string{"a", "b"}},
+		{"empty array", `[]`, []string{}},
+		{"bare string", `"http://img/x.jpg"`, []string{"http://img/x.jpg"}},
+		{"empty string", `""`, nil},
+		{"false", `false`, nil},
+		{"null", `null`, nil},
+		{"malformed array", `[1,2]`, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var s struct {
+				B FlexStringSlice `json:"backdrop_path"`
+			}
+			if err := json.Unmarshal([]byte(`{"backdrop_path":`+tc.in+`}`), &s); err != nil {
+				t.Fatalf("unmarshal %s: %v", tc.in, err)
+			}
+			if len(s.B) != len(tc.want) {
+				t.Fatalf("in=%s got %v (len %d), want %v (len %d)", tc.in, s.B, len(s.B), tc.want, len(tc.want))
+			}
+			for i := range tc.want {
+				if s.B[i] != tc.want[i] {
+					t.Errorf("in=%s index %d = %q, want %q", tc.in, i, s.B[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
