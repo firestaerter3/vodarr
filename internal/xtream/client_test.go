@@ -196,3 +196,76 @@ func TestFlexStringSliceUnmarshal(t *testing.T) {
 		})
 	}
 }
+
+// TestFlexYearUnmarshal covers the provider inconsistency that aborted every
+// VOD sync: year arriving as a bare JSON number rather than a string. Roughly
+// 10% of the catalogue (1,477 of 14,770 entries when measured) sends a number.
+//
+// Everything that is not a four-digit year must come out empty. A non-empty
+// junk year is worse than no year, because the scheduler only falls back to
+// extractNameYear when the field is empty.
+func TestFlexYearUnmarshal(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"string", `"2016"`, "2016"},
+		{"bare number", `2016`, "2016"},
+		{"string with surrounding spaces", `" 2016 "`, "2016"},
+		{"empty string", `""`, ""},
+		{"false", `false`, ""},
+		{"null", `null`, ""},
+		{"non-numeric string", `"N/A"`, ""},
+		{"fractional string", `"2016.5"`, ""},
+		{"fractional number", `2016.5`, ""},
+		{"float that renders as integral", `2016.0`, ""},
+		{"exponent notation", `1e3`, ""},
+		{"float precision trap", `2016.0000000000000001`, ""},
+		{"too few digits", `999`, ""},
+		{"too many digits", `20161`, ""},
+		{"true", `true`, ""},
+		{"object", `{"a":1}`, ""},
+		{"array", `["2016"]`, ""},
+		{"out of float range", `1e400`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var s struct {
+				Y FlexYear `json:"year"`
+			}
+			if err := json.Unmarshal([]byte(`{"year":`+tc.in+`}`), &s); err != nil {
+				t.Fatalf("unmarshal %s: %v", tc.in, err)
+			}
+			if s.Y.String() != tc.want {
+				t.Errorf("in=%s got %q, want %q", tc.in, s.Y.String(), tc.want)
+			}
+		})
+	}
+}
+
+// TestVODStreamMixedYearTypes is the regression test for the reported failure:
+// a single entry with a numeric year used to fail the whole decode, so no
+// stream synced at all. Assert the entire slice survives, not just that the one
+// offending field parses.
+func TestVODStreamMixedYearTypes(t *testing.T) {
+	payload := `[
+		{"stream_id":1,"name":"String Year","year":"1999"},
+		{"stream_id":2,"name":"Numeric Year","year":2016},
+		{"stream_id":3,"name":"No Year","year":""},
+		{"stream_id":4,"name":"Null Year","year":null}
+	]`
+	var streams []VODStream
+	if err := json.Unmarshal([]byte(payload), &streams); err != nil {
+		t.Fatalf("one non-conforming year aborted the whole decode: %v", err)
+	}
+	if len(streams) != 4 {
+		t.Fatalf("got %d streams, want 4", len(streams))
+	}
+	want := []string{"1999", "2016", "", ""}
+	for i, w := range want {
+		if got := streams[i].Year.String(); got != w {
+			t.Errorf("streams[%d].Year = %q, want %q", i, got, w)
+		}
+	}
+}

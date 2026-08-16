@@ -497,7 +497,7 @@ func (s *Scheduler) fetchAll(ctx context.Context) ([]*index.Item, error) {
 		}
 		s.setProgress("Fetching VOD catalog", i+1, len(streams))
 
-		year := st.Year
+		year := st.Year.String()
 		if year == "" {
 			// Use extractNameYear (strips quality markers before matching) so
 			// that "Movie - 2016 [DOLBY]" correctly yields "2016" rather than "".

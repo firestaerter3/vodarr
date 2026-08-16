@@ -75,7 +75,7 @@ type VODStream struct {
 	Duration     string  `json:"duration"`
 	Backdrop     FlexStringSlice `json:"backdrop_path"`
 	Poster       string  `json:"stream_icon"`
-	Year         string  `json:"year"`
+	Year         FlexYear        `json:"year"`
 }
 
 // VODInfo holds detailed info about a single VOD item.
@@ -482,4 +482,57 @@ func (f *FlexFloat) UnmarshalJSON(data []byte) error {
 	}
 	*f = FlexFloat(fv)
 	return nil
+}
+
+// FlexYear handles providers that send `year` as a JSON string on some items
+// and a bare JSON number on others, and as false/null/"" when empty. It never
+// returns an error so one malformed field on one item cannot abort an entire
+// sync.
+//
+// Anything that is not a four-digit year becomes empty rather than passing
+// through, and that matters more than it looks. The scheduler falls back to
+// extractNameYear only when the year is empty, so a non-empty junk value
+// ("2016.5", "N/A", true) would silently suppress a working fallback and then
+// flow on into the TMDB lookup, the index year filter and the "Name (Year)"
+// folder path. Four digits is the same definition the rest of the package
+// already uses: see yearInParensRe, yearDashRe and yearBracketRe.
+type FlexYear string
+
+func (f *FlexYear) UnmarshalJSON(data []byte) error {
+	s := strings.TrimSpace(string(data))
+	if s == "" || s == "null" || s == "false" || s == `""` {
+		*f = ""
+		return nil
+	}
+	if s[0] == '"' {
+		var str string
+		if err := json.Unmarshal([]byte(s), &str); err != nil {
+			*f = ""
+			return nil
+		}
+		*f = FlexYear(fourDigitYear(str))
+		return nil
+	}
+	// A bare number. Validate the original token rather than a float
+	// round-trip: 2016.0000000000000001 parses to exactly 2016 as a float64 and
+	// would otherwise be accepted as a year it is not.
+	*f = FlexYear(fourDigitYear(s))
+	return nil
+}
+
+func (f FlexYear) String() string { return string(f) }
+
+// fourDigitYear returns s trimmed when it is exactly four digits, and "" for
+// everything else.
+func fourDigitYear(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) != 4 {
+		return ""
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return ""
+		}
+	}
+	return s
 }
