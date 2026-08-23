@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"regexp"
 	"sort"
 	"strconv"
@@ -415,8 +416,33 @@ func (s *Scheduler) Sync(ctx context.Context) error {
 	})
 
 	now := time.Now()
+
+	// Bracketing lines around the cache write, with heap figures.
+	//
+	// This function was where the process died: encoding the whole catalogue in
+	// memory OOM-killed it inside SaveIndexCache on every completed sync, and a
+	// SIGKILL leaves nothing behind, so "index cache save failed" was never
+	// reached and there was no evidence at all in the container log. The
+	// mechanism was only ever visible in the scope unit's journald entry.
+	//
+	// The signal is therefore the ABSENCE of the closing line: an
+	// "index cache save" with no matching "index cache saved" means the process
+	// died mid-write. heap_mb is what turns the memory limit from a guess into
+	// a measured number, since the live index size has never been recorded.
+	var msBefore runtime.MemStats
+	runtime.ReadMemStats(&msBefore)
+	slog.Info("index cache save", "items", len(merged),
+		"heap_mb", msBefore.HeapAlloc/(1<<20), "sys_mb", msBefore.Sys/(1<<20))
+
+	saveStart := time.Now()
 	if err := SaveIndexCache(s.cachePath, merged, s.syncGen, now, s.SyncHistory()); err != nil {
 		slog.Warn("index cache save failed", "error", err)
+	} else {
+		var msAfter runtime.MemStats
+		runtime.ReadMemStats(&msAfter)
+		slog.Info("index cache saved", "items", len(merged),
+			"took_ms", time.Since(saveStart).Milliseconds(),
+			"heap_mb", msAfter.HeapAlloc/(1<<20), "sys_mb", msAfter.Sys/(1<<20))
 	}
 
 	return nil

@@ -150,7 +150,22 @@ func main() {
 	}()
 
 	select {
-	case err := <-errc:
+	case err, ok := <-errc:
+		// Logged UNCONDITIONALLY, and with `ok`, because the three ways out of
+		// this receive were previously indistinguishable and two of them exited
+		// silently: a real error, a nil send, and a CLOSED channel (a receive on
+		// a closed channel yields the zero value immediately, which for a
+		// chan error is nil).
+		//
+		// The one-liner originally proposed for this (log err before the if)
+		// would have printed error=<nil> for the closed case and told nobody
+		// anything. `ok` is what separates them.
+		//
+		// None of these turned out to be the vodarr restart loop: that was an
+		// OOM kill inside SaveIndexCache, and a SIGKILL never reaches this
+		// select at all. Kept anyway, because "the process ended and nothing
+		// said why" cost a lot of investigation once already.
+		slog.Info("server goroutine returned", "error", err, "channel_open", ok)
 		if err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)
 			os.Exit(1)
