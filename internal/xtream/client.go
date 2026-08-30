@@ -100,6 +100,9 @@ type VODInfoDetail struct {
 	Duration    string           `json:"duration"`
 	Backdrop    FlexStringSlice  `json:"backdrop_path"`
 	Bitrate     int              `json:"bitrate"`
+	// Deliberately NOT json.RawMessage, unlike EpisodeInfo.Video: this one is read,
+	// at EstimateMovieFileSize (Video.Tags["DURATION"]). If a provider ever sends a
+	// string here it needs a real shadow-type UnmarshalJSON, not a raw field.
 	Video       VODVideoInfo     `json:"video"`
 }
 
@@ -174,14 +177,21 @@ type EpisodeInfo struct {
 	Bitrate      int               `json:"bitrate"`
 	MovieImage   string            `json:"movie_image"`
 	Rating       FlexFloat         `json:"rating"`
-	Video        EpisodeVideoInfo  `json:"video"`
-}
-
-// EpisodeVideoInfo holds per-episode video stream metadata from get_series_info.
-// Tags is a freeform map; the key "NUMBER_OF_BYTES-eng" (or "NUMBER_OF_BYTES")
-// contains the exact file size in bytes when the provider includes it.
-type EpisodeVideoInfo struct {
-	Tags map[string]string `json:"tags"`
+	// Provider may return the tags object, a bare string, null or []. The field is
+	// unused, so keep it raw rather than typed.
+	//
+	// A typed target does not abort the decode: encoding/json records an
+	// UnmarshalTypeError, skips that one value and carries on, so the episodes all
+	// decode and only Decode's return value is non-nil. The caller in internal/sync
+	// takes the result only when err == nil, so one bad nested field discards a
+	// series that parsed perfectly.
+	//
+	// Do not "fix" that by using the partial result when the error is only a type
+	// error. It would work here and it would silently swallow genuine decode
+	// failures, which is strictly worse than a raw field.
+	//
+	// Same treatment as Seasons above, for the same reason.
+	Video        json.RawMessage   `json:"video"`
 }
 
 // Authenticate validates the credentials and returns server info.

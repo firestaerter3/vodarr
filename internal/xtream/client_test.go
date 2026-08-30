@@ -269,3 +269,46 @@ func TestVODStreamMixedYearTypes(t *testing.T) {
 		}
 	}
 }
+
+// TestSeriesInfoMixedVideoTypes covers a provider sending something other than the
+// tags object in a per-episode "video" field. Before the fix, encoding/json recorded
+// an UnmarshalTypeError for that one field and GetSeriesInfo returned it, so the
+// scheduler's `err == nil` guard discarded the entire, fully-decoded series.
+//
+// If you are matching that error text against a log, the field path is Go-version
+// dependent and the trap is easy to fall into. Under go1.25.8, which is what the
+// image builds with, it reads:
+//
+//	json: cannot unmarshal string into Go struct field EpisodeInfo.episodes.info.video
+//
+// Under go1.27 the same failure reads .episodes.1.1.info.video, because 1.27 added
+// map keys and slice indices to the path. A log filter written against one version
+// silently matches nothing on the other.
+func TestSeriesInfoMixedVideoTypes(t *testing.T) {
+	payload := `{
+		"info": {"name": "Some Series"},
+		"episodes": {"1": [
+			{"id":"11","episode_num":1,"title":"Object video","info":{"duration":"00:45:00","video":{"tags":{"NUMBER_OF_BYTES":"123"}}}},
+			{"id":"12","episode_num":2,"title":"String video","info":{"duration":"00:46:00","video":""}},
+			{"id":"13","episode_num":3,"title":"Null video","info":{"duration":"00:47:00","video":null}},
+			{"id":"14","episode_num":4,"title":"Array video","info":{"duration":"00:48:00","video":[]}}
+		]}
+	}`
+	var info SeriesInfo
+	if err := json.Unmarshal([]byte(payload), &info); err != nil {
+		t.Fatalf("one non-conforming video field cost the whole series its episodes: %v", err)
+	}
+	eps := info.Episodes["1"]
+	if len(eps) != 4 {
+		t.Fatalf("got %d episodes, want 4", len(eps))
+	}
+	for i, want := range []int{1, 2, 3, 4} {
+		if got := eps[i].EpisodeNum.Int(); got != want {
+			t.Errorf("eps[%d].EpisodeNum = %d, want %d", i, got, want)
+		}
+	}
+	if eps[1].Info.Duration != "00:46:00" {
+		t.Errorf("sibling fields must survive the raw video field: Duration = %q, want %q",
+			eps[1].Info.Duration, "00:46:00")
+	}
+}
